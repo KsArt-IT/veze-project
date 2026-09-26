@@ -60,7 +60,6 @@ veze-project/
 ├── project/
 │   ├── prd.md              # вимоги до продукту
 │   ├── process/            # процес розробки, lessons learned
-│   └── archive/            # старі чернетки
 └── veze-node-app/          # сервер Node.js + MySQL у Docker
 ```
 

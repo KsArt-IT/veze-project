@@ -87,15 +87,16 @@
 | Потрібно | Файл |
 |---|---|
 | Карта таблиць (що зберігає, зв'язки, групування) | [project/architecture/database-tables.md](project/architecture/database-tables.md) |
-| SQL-скрипти: `0x_schema_*` — таблиці, `1x_seed_*` — тестові дані | `veze-node-app/init/*.sql` |
+| SQL-скрипти: `0x_schema_*` / `0x_0y_schema_<таблиця>` — таблиці, `1x_seed_*` — тестові дані | `veze-node-app/init/*.sql` |
 | Приклади запитів | `veze-node-app/queries/` |
 
 Домовленості:
 - Таблиці та колонки — `snake_case`, таблиці в множині (`rides`, `vehicles`).
-- Кодування `utf8mb4`, час зберігається в UTC.
+- Кодування `utf8mb4`, час зберігається в UTC. Кожен `.sql`-файл починається з `SET NAMES utf8mb4;` —
+  інакше клієнт `mysql` читає файл як `latin1` і кирилиця в даних та `COMMENT` псується.
+- Пояснення до таблиць і важливих полів — через `COMMENT` (видно в Adminer/DBeaver), не `--`.
 - Гроші — `DECIMAL(10,2)`, ніколи не `FLOAT`.
 - Координати — `POINT SRID 4326` (одна колонка, не пара lat/lng); у WKT порядок «широта довгота».
-- Старий чорновик схеми під PostgreSQL — у `project/archive/postgres-draft/`, лише для довідки.
 
 ---
 

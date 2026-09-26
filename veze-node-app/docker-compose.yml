@@ -1,0 +1,97 @@
+name: veze
+
+services:
+  # 1. Node.js сервер (API)
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: veze_app
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT}:${APP_PORT}"
+    environment:
+      NODE_ENV: ${NODE_ENV}
+      APP_PORT: ${APP_PORT}
+      DB_HOST: db
+      # всередині мережі compose MySQL завжди слухає 3306, DB_PORT - тільки порт на хості
+      DB_PORT: 3306
+      DB_NAME: ${MYSQL_DATABASE}
+      DB_USER: ${MYSQL_USER}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+    networks:
+      - app_network
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # 2. База даних MySQL (LTS)
+  db:
+    image: mysql:9.7
+    container_name: veze_db
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: UTC
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+00:00
+      # враховувати ліміти контейнера (memory: 1G), а не всю памʼять хоста
+      - --container-aware=ON
+      # X Protocol (порт 33060) не використовуємо — вимикаємо зайвий відкритий порт
+      - --mysqlx=OFF
+    ports:
+      - "${DB_PORT}:3306"
+    volumes:
+      # дані БД живуть у іменованому томі і переживають перезапуск контейнера
+      - mysql_data:/var/lib/mysql
+      # всі *.sql з ./init виконуються ОДИН раз — при першому створенні тома, за алфавітом
+      - ./init:/docker-entrypoint-initdb.d:ro
+    # pid-файл і сокет: в образі /var/run/mysqld відкритий усім (1777) — MySQL попереджає.
+    # Закритий tmpfs лише для користувача mysql (uid 999), до того ж очищується при кожному старті
+    tmpfs:
+      - /var/run/mysqld:uid=999,gid=999,mode=0750
+    networks:
+      - app_network
+    healthcheck:
+      # 127.0.0.1 (TCP), а не localhost (сокет): на час init скриптів MySQL вимикає мережу,
+      # тому healthy настане лише після їх виконання.
+      # $$ - змінна береться з оточення контейнера, пароль не потрапляє в конфіг compose;
+      # MYSQL_PWD замість -p: пароль не видно в списку процесів і немає попередження mysqladmin
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_PASSWORD\" mysqladmin ping -h 127.0.0.1 -u\"$$MYSQL_USER\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # 3. Adminer — веб-інтерфейс для перегляду БД: http://localhost:${ADMINER_PORT}
+  adminer:
+    image: adminer:latest
+    container_name: veze_adminer
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    ports:
+      - "${ADMINER_PORT}:8080"
+    networks:
+      - app_network
+    depends_on:
+      - db
+
+volumes:
+  mysql_data:
+
+networks:
+  app_network:
+    driver: bridge
