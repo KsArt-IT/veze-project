@@ -1,0 +1,16 @@
+# секреты
+.env
+.env.*
+!.env.example
+
+# зависимости и сборка
+node_modules/
+.next/
+dist/
+coverage/
+
+# логи и системное
+npm-debug.log*
+.DS_Store
+.idea/
+.vscode/
