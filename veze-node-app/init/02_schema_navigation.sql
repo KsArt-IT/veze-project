@@ -64,6 +64,8 @@ CREATE TABLE pickup_points (
                     COMMENT 'Підказка пасажиру: «Головний вхід», «З боку парку»',
     location        POINT           NOT NULL SRID 4326
                     COMMENT 'Де саме зупиняється авто',
+    shelter_hint    VARCHAR(150)
+                    COMMENT 'Укриття поруч, для тривоги: «Метро Хрещатик, вхід за 50 м»; NULL — немає',
     is_active       BOOLEAN         NOT NULL DEFAULT TRUE
                     COMMENT 'FALSE — точка тимчасово недоступна',
     SPATIAL KEY sp_pickup_points_location (location),
