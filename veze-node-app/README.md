@@ -19,10 +19,19 @@ veze-node-app/
 │   ├── 01_03_schema_streets.sql
 │   ├── 01_04_schema_buildings.sql
 │   ├── 02_schema_navigation.sql  # граф доріг, точки посадки, депо, зони сервісу
+│   ├── 03_01_schema_users.sql    # авторизація: акаунти, способи входу
+│   ├── 03_02_schema_user_sessions.sql  # сесії (refresh-токени), пристрої
+│   ├── 03_03_schema_auth_codes.sql     # одноразові коди OTP
+│   ├── 04_01_schema_passengers.sql     # пасажири: профіль, улюблені локації, способи оплати
+│   ├── 04_02_schema_saved_locations.sql
+│   ├── 04_03_schema_payment_methods.sql
+│   ├── 05_01_schema_employees.sql      # співробітники: оператори, техніки, адміни
 │   ├── 10_seed_geo.sql           # тестові дані: центр Києва
-│   └── 11_seed_navigation.sql
+│   ├── 11_seed_navigation.sql
+│   └── 12_seed_users.sql         # тестові акаунти, пароль veze-test-1
 └── queries/
-    └── navigation-examples.sql   # приклади запитів (не виконуються автоматично)
+    ├── navigation-examples.sql   # приклади запитів (не виконуються автоматично)
+    └── auth-examples.sql
 ```
 
 Опис таблиць — [project/architecture/database-tables.md](../project/architecture/database-tables.md).
