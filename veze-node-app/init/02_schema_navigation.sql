@@ -4,6 +4,8 @@
 -- Граф доріг — вузли (перехрестя, повороти) і ділянки між ними.
 -- Ним користується емулятор авто для руху маршрутом; реальні авто мають власну навігацію,
 -- але точки посадки, депо та зони сервісу потрібні і їм.
+-- Ділянка спрямована: рух лише from → to. Двостороння дорога — дві ділянки (туди й назад),
+-- кожна зі своєю швидкістю та is_active; одностороння — одна.
 -- Вигнута дорога — це кілька ділянок із проміжними вузлами.
 -- Довжина ділянки не зберігається: рахується з координат вузлів (ST_Distance), щоб не дублювати.
 -- =====================================================================
@@ -25,8 +27,6 @@ CREATE TABLE road_segments (
     to_node_id      BIGINT UNSIGNED  NOT NULL,
     street_id       INT UNSIGNED
                     COMMENT 'Вулиця; NULL — проїзд без назви, розворот',
-    is_oneway       BOOLEAN          NOT NULL DEFAULT FALSE
-                    COMMENT 'TRUE — рух лише from → to',
     max_speed_kmh   TINYINT UNSIGNED NOT NULL DEFAULT 50
                     COMMENT 'Обмеження швидкості, км/год',
     is_active       BOOLEAN          NOT NULL DEFAULT TRUE
@@ -38,7 +38,7 @@ CREATE TABLE road_segments (
     CONSTRAINT fk_road_segments_street FOREIGN KEY (street_id)    REFERENCES streets (id),
     CONSTRAINT chk_road_segments_not_loop CHECK (from_node_id <> to_node_id),
     CONSTRAINT chk_road_segments_speed    CHECK (max_speed_kmh BETWEEN 5 AND 130)
-) COMMENT = 'Ділянки доріг між вузлами (ребра графа); довжина рахується з координат вузлів';
+) COMMENT = 'Спрямовані ділянки доріг (ребра графа): рух лише from → to; довжина рахується з координат вузлів';
 
 CREATE TABLE pickup_point_kinds (
     id      TINYINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -58,7 +58,7 @@ CREATE TABLE pickup_points (
                     COMMENT 'Будинок; NULL — точка не привʼязана до будинку (стоянка на площі)',
     road_node_id    BIGINT UNSIGNED NOT NULL
                     COMMENT 'Вузол графа, з якого авто підʼїжджає до точки',
-    kind_id         TINYINT UNSIGNED NOT NULL DEFAULT 1
+    kind_id         TINYINT UNSIGNED NOT NULL
                     COMMENT 'Тип точки, довідник pickup_point_kinds',
     name            VARCHAR(150)
                     COMMENT 'Підказка пасажиру: «Головний вхід», «З боку парку»',

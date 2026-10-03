@@ -6,6 +6,8 @@
 -- Звідси список «мої пристрої», «вийти на цьому пристрої» і «вийти всюди» (revoked_at).
 -- Refresh-токен зберігається лише як SHA-256 хеш: витік БД не дає увійти чужими сесіями.
 -- Ротація: при оновленні токена в тому самому рядку замінюється refresh_token_hash.
+-- Свідоме спрощення: повторне використання старого токена (ознака крадіжки) не виявляється —
+-- старий хеш просто «не знайдено». Якщо знадобиться, додати previous_refresh_token_hash.
 -- =====================================================================
 
 -- кодування з'єднання: без цього клієнт mysql читає файл як latin1 і кирилиця псується
@@ -58,6 +60,7 @@ CREATE TABLE user_sessions (
     revoked_at          TIMESTAMP
                         COMMENT 'Вихід або відкликання; NULL — сесія діє (якщо не минув expires_at)',
     KEY idx_user_sessions_user (user_id, revoked_at),
+    KEY idx_user_sessions_expires (expires_at) COMMENT 'Чистка прострочених сесій',
     CONSTRAINT fk_user_sessions_user     FOREIGN KEY (user_id)     REFERENCES users (id),
     CONSTRAINT fk_user_sessions_identity FOREIGN KEY (identity_id) REFERENCES user_identities (id)
         ON DELETE SET NULL,

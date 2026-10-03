@@ -25,7 +25,7 @@ INSERT INTO street_types (code, name) VALUES
 CREATE TABLE streets (
     id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     city_id     INT UNSIGNED NOT NULL,
-    type_id     TINYINT UNSIGNED NOT NULL DEFAULT 1
+    type_id     TINYINT UNSIGNED NOT NULL
                 COMMENT 'Тип вулиці, довідник street_types',
     name        VARCHAR(150) NOT NULL
                 COMMENT 'Назва без типу: «Хрещатик», а не «вул. Хрещатик»',

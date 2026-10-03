@@ -24,7 +24,7 @@ CREATE TABLE saved_locations (
     id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     passenger_id    BIGINT UNSIGNED NOT NULL,
     pickup_point_id BIGINT UNSIGNED NOT NULL,
-    label_id        TINYINT UNSIGNED NOT NULL DEFAULT 3
+    label_id        TINYINT UNSIGNED NOT NULL
                     COMMENT 'Мітка, довідник saved_location_labels',
     custom_name     VARCHAR(150)
                     COMMENT 'Власна назва: «Школа Артема»; заповнюється, коли label = other',

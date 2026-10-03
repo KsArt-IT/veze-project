@@ -41,6 +41,7 @@ CREATE TABLE auth_codes (
     used_at         TIMESTAMP        COMMENT 'Код використано; повторно не приймається',
     KEY idx_auth_codes_lookup (provider_id, identifier, purpose_id, created_at),
     KEY idx_auth_codes_user (user_id),
+    KEY idx_auth_codes_expires (expires_at) COMMENT 'Чистка прострочених кодів',
     CONSTRAINT fk_auth_codes_provider FOREIGN KEY (provider_id) REFERENCES auth_providers (id),
     CONSTRAINT fk_auth_codes_purpose  FOREIGN KEY (purpose_id)  REFERENCES auth_code_purposes (id),
     CONSTRAINT fk_auth_codes_user     FOREIGN KEY (user_id)     REFERENCES users (id),

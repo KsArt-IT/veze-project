@@ -36,11 +36,16 @@ CREATE TABLE payment_methods (
     provider_token  VARCHAR(255)     NOT NULL UNIQUE
                     COMMENT 'Токен картки від платіжного шлюзу (або емулятора); за ним приходить webhook',
     is_default      BOOLEAN          NOT NULL DEFAULT FALSE
-                    COMMENT 'TRUE — списувати з цієї картки автоматично; єдиність перевіряє застосунок',
+                    COMMENT 'TRUE — списувати з цієї картки автоматично; одна на пасажира (uq_payment_methods_default)',
     is_active       BOOLEAN          NOT NULL DEFAULT TRUE
                     COMMENT 'FALSE — картку відвʼязано пасажиром',
+    default_owner_id BIGINT UNSIGNED GENERATED ALWAYS AS
+                    (IF(is_default AND is_active, passenger_id, NULL)) STORED
+                    COMMENT 'Службова: passenger_id, якщо картка основна й активна; NULL у решти',
     created_at      TIMESTAMP        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     KEY idx_payment_methods_passenger (passenger_id),
+    -- UNIQUE пропускає багато NULL, тож обмеження діє лише на основні активні картки
+    UNIQUE KEY uq_payment_methods_default (default_owner_id),
     CONSTRAINT fk_payment_methods_passenger FOREIGN KEY (passenger_id) REFERENCES passengers (id),
     CONSTRAINT fk_payment_methods_brand     FOREIGN KEY (brand_id)     REFERENCES card_brands (id),
     CONSTRAINT chk_payment_methods_month    CHECK (expiry_month BETWEEN 1 AND 12)
