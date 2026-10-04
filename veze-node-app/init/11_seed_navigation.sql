@@ -39,7 +39,7 @@ INSERT INTO road_segments (from_node_id, to_node_id, street_id, max_speed_kmh) V
     (3, 6, 3, 30),                  -- Прорізна, лише від Хрещатика
     (4, 7, 4, 40), (7, 4, 4, 40),   -- Богдана Хмельницького
     (6, 7, 5, 50), (7, 6, 5, 50),   -- Володимирська
-    (5, 9, 6, 50), (9, 5, 6, 50);   -- Велика Васильківська   -- Велика Васильківська
+    (5, 9, 6, 50), (9, 5, 6, 50);   -- Велика Васильківська
 
 -- kind_id: 1 = curb (біля бордюру), 2 = parking (паркінг), 3 = taxi_rank (стоянка таксі)
 INSERT INTO pickup_points (building_id, road_node_id, kind_id, name, location) VALUES
@@ -51,6 +51,10 @@ INSERT INTO pickup_points (building_id, road_node_id, kind_id, name, location) V
     (5,    5, 2, 'Паркінг біля ринку',             ST_GeomFromText('POINT(50.4417 30.5205)', 4326)),
     (6,    6, 1, NULL,                             ST_GeomFromText('POINT(50.4478 30.5185)', 4326)),
     (NULL, 2, 3, 'Стоянка на Майдані Незалежності', ST_GeomFromText('POINT(50.4500 30.5245)', 4326));
+
+-- Укриття поруч: станції метро біля точок 1 (Майдан), 2 (Хрещатик), 8 (стоянка на Майдані)
+UPDATE pickup_points SET shelter_hint = 'Метро «Майдан Незалежності», вхід за 60 м' WHERE id IN (1, 8);
+UPDATE pickup_points SET shelter_hint = 'Метро «Хрещатик», вхід за 50 м'            WHERE id = 2;
 
 INSERT INTO depots (road_node_id, name, location, capacity, charger_count) VALUES
     (9, 'Депо «Центр»', ST_GeomFromText('POINT(50.4380 30.5180)', 4326), 20, 10);
