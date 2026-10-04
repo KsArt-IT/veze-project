@@ -26,12 +26,35 @@ veze-node-app/
 │   ├── 04_02_schema_saved_locations.sql
 │   ├── 04_03_schema_payment_methods.sql
 │   ├── 05_01_schema_employees.sql      # співробітники: оператори, техніки, адміни
+│   ├── 06_01_schema_vehicle_classes.sql  # класи й моделі авто
+│   ├── 06_02_schema_vehicles.sql       # авто парку, історія статусів
+│   ├── 07_01_schema_tariffs.sql        # тарифи: місто, міжміські, версії
+│   ├── 07_02_schema_surge.sql          # коефіцієнти: час пік, ніч, погода, попит
+│   ├── 07_03_schema_location_fees.sql  # збори за місце: аеропорт, вокзал, парковка
+│   ├── 08_01_schema_service_restrictions.sql  # тривоги, комендантська година
+│   ├── 09_01_schema_promo_codes.sql    # промокоди
+│   ├── 09_02_schema_rides.sql          # поїздки й доставки
+│   ├── 09_03_schema_ride_events.sql    # події й трек поїздки
+│   ├── 09_04_schema_ride_prices.sql    # розшифровка ціни
+│   ├── 09_05_schema_payments.sql       # оплата: блокування, списання, повернення
+│   ├── 09_06_schema_ratings.sql        # оцінки поїздок з тегами
+│   ├── 09_07_schema_incidents.sql      # інциденти: стрічка оператора, винуватець
 │   ├── 10_seed_geo.sql           # тестові дані: центр Києва
 │   ├── 11_seed_navigation.sql
-│   └── 12_seed_users.sql         # тестові акаунти, пароль veze-test-1
+│   ├── 12_seed_users.sql         # тестові акаунти, пароль veze-test-1
+│   ├── 13_seed_vehicles.sql      # ігровий парк: 9 емульованих авто всіх класів
+│   ├── 14_seed_tariffs.sql
+│   ├── 15_seed_service_restrictions.sql
+│   ├── 16_seed_rides.sql         # картки, промокоди, 4 поїздки (зокрема доставка)
+│   ├── 17_seed_payments.sql
+│   └── 18_seed_feedback.sql      # оцінки й інциденти
 └── queries/
     ├── navigation-examples.sql   # приклади запитів (не виконуються автоматично)
-    └── auth-examples.sql
+    ├── auth-examples.sql
+    ├── vehicles-examples.sql
+    ├── restrictions-examples.sql
+    ├── rides-examples.sql
+    └── payments-feedback-examples.sql
 ```
 
 Опис таблиць — [project/architecture/database-tables.md](../project/architecture/database-tables.md).
