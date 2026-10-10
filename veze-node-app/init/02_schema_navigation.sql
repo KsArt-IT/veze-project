@@ -1,5 +1,5 @@
 -- =====================================================================
--- 02_schema_navigation.sql — навігація: граф доріг, точки посадки, депо, зони сервісу
+-- 02_schema_navigation.sql — навігація: граф доріг, мости, точки посадки, депо, зони сервісу
 --
 -- Граф доріг — вузли (перехрестя, повороти) і ділянки між ними.
 -- Ним користується емулятор авто для руху маршрутом; реальні авто мають власну навігацію,
@@ -39,6 +39,22 @@ CREATE TABLE road_segments (
     CONSTRAINT chk_road_segments_not_loop CHECK (from_node_id <> to_node_id),
     CONSTRAINT chk_road_segments_speed    CHECK (max_speed_kmh BETWEEN 5 AND 130)
 ) COMMENT = 'Спрямовані ділянки доріг (ребра графа): рух лише from → to; довжина рахується з координат вузлів';
+
+-- Міст — це вулиця типу 'bridge' (назва й місто — у streets), його ділянки — звичайні
+-- road_segments з тим самим street_id. Перекриття мосту — один рядок тут, а не UPDATE усіх
+-- ділянок: is_active ділянки лишається для локальних ремонтів, і відкриття мосту їх не скидає.
+-- Ділянка доступна для маршруту: rs.is_active AND (мосту немає OR b.is_active).
+CREATE TABLE bridges (
+    id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    street_id       INT UNSIGNED NOT NULL UNIQUE
+                    COMMENT 'Вулиця-міст (тип bridge): назва й місто беруться звідти',
+    is_active       BOOLEAN      NOT NULL DEFAULT TRUE
+                    COMMENT 'FALSE — міст перекрито повністю, в обидва боки',
+    closure_note    VARCHAR(255)
+                    COMMENT 'Причина перекриття для оператора; NULL, коли міст відкрито',
+    CONSTRAINT fk_bridges_street FOREIGN KEY (street_id) REFERENCES streets (id),
+    CONSTRAINT chk_bridges_note  CHECK (is_active = FALSE OR closure_note IS NULL)
+) COMMENT = 'Мости: перекриття всіх ділянок мосту одним прапорцем';
 
 CREATE TABLE pickup_point_kinds (
     id      TINYINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

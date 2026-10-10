@@ -37,14 +37,16 @@ SELECT z.name, ST_Contains(z.area, @me) AS is_inside
 FROM service_zones z
 WHERE z.city_id = 1 AND z.is_active;
 
--- 5. Граф доріг: ділянки з довжиною (рахується з координат вузлів)
+-- 5. Граф доріг для маршруту: доступні ділянки з довжиною (рахується з координат вузлів).
+--    Ділянка недоступна, якщо перекрита сама (ремонт) або перекрито весь міст, на якому вона.
 SELECT rs.id, s.name AS street, rs.from_node_id, rs.to_node_id, rs.max_speed_kmh,
        ROUND(ST_Distance(a.location, b.location)) AS length_m
 FROM road_segments rs
 JOIN road_nodes a     ON a.id = rs.from_node_id
 JOIN road_nodes b     ON b.id = rs.to_node_id
 LEFT JOIN streets s   ON s.id = rs.street_id
-WHERE rs.is_active;
+LEFT JOIN bridges br  ON br.street_id = rs.street_id
+WHERE rs.is_active AND (br.id IS NULL OR br.is_active);
 
 -- 6. Найближче депо до вузла, де зараз авто
 SELECT d.name, ROUND(ST_Distance(d.location, n.location)) AS distance_m
@@ -53,3 +55,23 @@ CROSS JOIN road_nodes n
 WHERE n.id = 3 AND d.is_active
 ORDER BY distance_m
 LIMIT 1;
+
+-- 7. Перекрити міст повністю й перевірити, що його ділянки зникли з графа, потім відкрити.
+--    У транзакції з ROLLBACK, щоб приклад не змінював тестові дані.
+START TRANSACTION;
+UPDATE bridges br
+JOIN streets s ON s.id = br.street_id
+SET br.is_active = FALSE, br.closure_note = 'Ремонт покриття'
+WHERE s.city_id = 1 AND s.name = 'Метро';
+
+SELECT s.name AS bridge, br.is_active, br.closure_note,
+       COUNT(rs.id) AS segments_closed
+FROM bridges br
+JOIN streets s             ON s.id = br.street_id
+LEFT JOIN road_segments rs ON rs.street_id = br.street_id
+WHERE NOT br.is_active
+GROUP BY br.id, s.name, br.is_active, br.closure_note;
+
+-- відкриття: прапорець назад і причину прибрати (CHECK не дасть лишити її)
+UPDATE bridges SET is_active = TRUE, closure_note = NULL WHERE street_id = 11;
+ROLLBACK;

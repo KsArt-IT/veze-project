@@ -16,7 +16,8 @@ INSERT INTO cities (id, country_id, name, timezone, location, is_active) VALUES
     (1, 1, 'Київ', 'Europe/Kyiv', ST_GeomFromText('POINT(50.4501 30.5234)', 4326), TRUE),
     (2, 1, 'Львів', 'Europe/Kyiv', ST_GeomFromText('POINT(49.8397 24.0297)', 4326), FALSE);
 
--- type_id: 1 = street (вулиця), 5 = square (площа) — див. street_types
+-- type_id: 1 = street (вулиця), 5 = square (площа), 6 = descent (узвіз), 9 = bridge (міст)
+-- — див. street_types
 INSERT INTO streets (id, city_id, type_id, name) VALUES
     (1, 1, 1, 'Хрещатик'),
     (2, 1, 1, 'Інститутська'),
@@ -26,7 +27,9 @@ INSERT INTO streets (id, city_id, type_id, name) VALUES
     (6, 1, 1, 'Велика Васильківська'),
     (7, 1, 5, 'Незалежності'),
     (8, 1, 5, 'Європейська'),
-    (9, 1, 5, 'Бессарабська');
+    (9, 1, 5, 'Бессарабська'),
+    (10, 1, 6, 'Дніпровський'),
+    (11, 1, 9, 'Метро');
 
 INSERT INTO buildings (id, street_id, number, name, location) VALUES
     (1, 1, '22', 'Головпоштамт',             ST_GeomFromText('POINT(50.4508 30.5230)', 4326)),

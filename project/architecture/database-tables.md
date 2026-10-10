@@ -23,6 +23,7 @@
 |---|---|---|
 | `road_nodes` | Узлы графа дорог (перекрёстки, повороты) | → `cities` |
 | `road_segments` | Направленные участки между узлами (двусторонняя дорога = две строки): скорость, перекрыт | → `road_nodes` ×2, `streets` |
+| `bridges` | Мост = улица типа `bridge`; `is_active = FALSE` перекрывает все его участки сразу, не трогая `road_segments.is_active` (ремонты) | → `streets` (1:1) |
 | `pickup_point_kinds` | Справочник типов точек посадки (curb, parking, taxi_rank) | — |
 | `pickup_points` | Точки посадки/высадки у домов или отдельно (стоянка такси); подсказка об укрытии рядом (`shelter_hint`) | → `buildings` (необязательно), `road_nodes`, `pickup_point_kinds` |
 | `depots` | Депо: стоянка и зарядка авто | → `road_nodes` |

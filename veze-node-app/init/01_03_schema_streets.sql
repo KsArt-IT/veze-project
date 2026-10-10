@@ -20,7 +20,8 @@ INSERT INTO street_types (code, name) VALUES
     ('square',     'площа'),
     ('descent',    'узвіз'),
     ('embankment', 'набережна'),
-    ('highway',    'шосе');
+    ('highway',    'шосе'),
+    ('bridge',     'міст');
 
 CREATE TABLE streets (
     id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
