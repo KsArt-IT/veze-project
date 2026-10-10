@@ -38,3 +38,15 @@ FROM (SELECT c.name AS city, CONCAT(st.name, ' ', s.name) AS street,
       JOIN cities c        ON c.id = s.city_id
       GROUP BY s.id, c.name, st.name, s.name) ranked
 WHERE place = 1;
+
+-- 3. Усі мости з поточним станом.
+--    Міст — це вулиця типу 'bridge'; LEFT JOIN bridges, щоб не втратити міст без рядка в bridges
+--    (такий вважаємо відкритим). Причина перекриття — лише коли міст перекрито.
+SELECT c.name AS city, CONCAT(st.name, ' ', s.name) AS bridge,
+       COALESCE(br.is_active, TRUE) AS is_open, br.closure_note
+FROM streets s
+JOIN street_types st  ON st.id = s.type_id
+JOIN cities c         ON c.id = s.city_id
+LEFT JOIN bridges br  ON br.street_id = s.id
+WHERE st.code = 'bridge'
+ORDER BY c.name, s.name;
