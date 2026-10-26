@@ -28,6 +28,10 @@ ANALYZE TABLE auth_code_purposes, auth_codes, auth_providers, bridges, buildings
 
 -- EXPLAIN у MySQL 9.x за замовчуванням виводить дерево (explain_format = TREE):
 -- читається знизу вгору й зсередини назовні; cost — оцінка, rows — очікувані рядки.
+-- Далі той самий запит з EXPLAIN FORMAT=TRADITIONAL — класична таблиця: рядок на таблицю
+-- в порядку зʼєднання; type — спосіб доступу (const/eq_ref/ref/range/index/ALL — від
+-- кращого до гіршого), key — обраний індекс, rows × filtered % — оцінка рядків, Extra —
+-- додаткові кроки (Using where / Using filesort / Using temporary / Using index).
 
 
 -- #####################################################################
@@ -56,6 +60,24 @@ WHERE ap.code = 'phone' AND ui.identifier = '+380501112233'
 -> Rows fetched before execution  (cost=0..0 rows=1)
    сам запит повернув рядків: 1 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT u.id AS user_id, u.password_hash, ui.id AS identity_id
+FROM user_identities ui
+JOIN auth_providers ap ON ap.id = ui.provider_id
+JOIN users u           ON u.id = ui.user_id
+WHERE ap.code = 'phone' AND ui.identifier = '+380501112233'
+  AND ui.verified_at IS NOT NULL
+  AND u.is_active AND u.deleted_at IS NULL
+  AND (u.locked_until IS NULL OR u.locked_until < UTC_TIMESTAMP());
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+-------+-----------------------------------------------------------------+----------------------------------------+---------+-------------+------+----------+-------------+
+| id | select_type | table | partitions | type  | possible_keys                                                   | key                                    | key_len | ref         | rows | filtered | Extra       |
++----+-------------+-------+------------+-------+-----------------------------------------------------------------+----------------------------------------+---------+-------------+------+----------+-------------+
+| 1  | SIMPLE      | ap    | NULL       | const | PRIMARY,code                                                    | code                                   | 82      | const       | 1    | 100      | Using index |
+| 1  | SIMPLE      | ui    | NULL       | const | uq_user_identities_provider_identifier,idx_user_identities_user | uq_user_identities_provider_identifier | 1023    | const,const | 1    | 100      | NULL        |
+| 1  | SIMPLE      | u     | NULL       | const | PRIMARY                                                         | PRIMARY                                | 8       | const       | 1    | 100      | NULL        |
++----+-------------+-------+------------+-------+-----------------------------------------------------------------+----------------------------------------+---------+-------------+------+----------+-------------+
+*/
+
 -- 2. Які профілі є в акаунта: пасажир і/або співробітник з роллю
 SELECT u.id AS user_id,
        p.id AS passenger_id,
@@ -78,6 +100,25 @@ WHERE u.id = 3;
 -> Rows fetched before execution  (cost=0..0 rows=1)
    сам запит повернув рядків: 1 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT u.id AS user_id,
+       p.id AS passenger_id,
+       e.id AS employee_id, er.code AS employee_role
+FROM users u
+LEFT JOIN passengers p      ON p.user_id = u.id AND p.is_active
+LEFT JOIN employees e       ON e.user_id = u.id AND e.dismissed_at IS NULL
+LEFT JOIN employee_roles er ON er.id = e.role_id
+WHERE u.id = 3;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+-------+---------------+---------+---------+-------+------+----------+-------------+
+| id | select_type | table | partitions | type  | possible_keys | key     | key_len | ref   | rows | filtered | Extra       |
++----+-------------+-------+------------+-------+---------------+---------+---------+-------+------+----------+-------------+
+| 1  | SIMPLE      | u     | NULL       | const | PRIMARY       | PRIMARY | 8       | const | 1    | 100      | Using index |
+| 1  | SIMPLE      | p     | NULL       | const | user_id       | user_id | 8       | const | 1    | 100      | NULL        |
+| 1  | SIMPLE      | e     | NULL       | const | user_id       | user_id | 8       | const | 1    | 100      | NULL        |
+| 1  | SIMPLE      | er    | NULL       | const | PRIMARY       | PRIMARY | 1       | const | 1    | 100      | NULL        |
++----+-------------+-------+------------+-------+---------------+---------+---------+-------+------+----------+-------------+
+*/
+
 -- 3. Усі способи входу акаунта (екран «Безпека» в профілі)
 SELECT ap.name AS provider, ui.identifier, ui.verified_at IS NOT NULL AS is_verified
 FROM user_identities ui
@@ -96,6 +137,20 @@ ORDER BY ui.created_at;
         -> Index lookup on ui using idx_user_identities_user (user_id = 1)  (cost=0.8 rows=3)
     -> Single-row index lookup on ap using PRIMARY (id = ui.provider_id)  (cost=0.283 rows=1)
    сам запит повернув рядків: 3 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT ap.name AS provider, ui.identifier, ui.verified_at IS NOT NULL AS is_verified
+FROM user_identities ui
+JOIN auth_providers ap ON ap.id = ui.provider_id
+WHERE ui.user_id = 1
+ORDER BY ui.created_at;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+-----------------------------------------------------------------+--------------------------+---------+------------------------+------+----------+----------------+
+| id | select_type | table | partitions | type   | possible_keys                                                   | key                      | key_len | ref                    | rows | filtered | Extra          |
++----+-------------+-------+------------+--------+-----------------------------------------------------------------+--------------------------+---------+------------------------+------+----------+----------------+
+| 1  | SIMPLE      | ui    | NULL       | ref    | uq_user_identities_provider_identifier,idx_user_identities_user | idx_user_identities_user | 8       | const                  | 3    | 100      | Using filesort |
+| 1  | SIMPLE      | ap    | NULL       | eq_ref | PRIMARY                                                         | PRIMARY                  | 1       | veze_db.ui.provider_id | 1    | 100      | NULL           |
++----+-------------+-------+------------+--------+-----------------------------------------------------------------+--------------------------+---------+------------------------+------+----------+----------------+
+*/
 
 -- 4. Телефон пасажира для оператора (дзвінок під час інциденту) — перший підтверджений
 SELECT p.first_name, ui.identifier AS phone
@@ -120,6 +175,23 @@ LIMIT 1;
             -> Index lookup on ui using idx_user_identities_user (user_id = '1')  (cost=0.631 rows=3)
    сам запит повернув рядків: 1 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT p.first_name, ui.identifier AS phone
+FROM passengers p
+JOIN user_identities ui ON ui.user_id = p.user_id AND ui.verified_at IS NOT NULL
+JOIN auth_providers ap  ON ap.id = ui.provider_id AND ap.code = 'phone'
+WHERE p.id = 1
+ORDER BY ui.created_at
+LIMIT 1;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+-------+-----------------------------------------------------------------+--------------------------+---------+-------+------+----------+----------------+
+| id | select_type | table | partitions | type  | possible_keys                                                   | key                      | key_len | ref   | rows | filtered | Extra          |
++----+-------------+-------+------------+-------+-----------------------------------------------------------------+--------------------------+---------+-------+------+----------+----------------+
+| 1  | SIMPLE      | p     | NULL       | const | PRIMARY,user_id                                                 | PRIMARY                  | 8       | const | 1    | 100      | Using filesort |
+| 1  | SIMPLE      | ap    | NULL       | const | PRIMARY,code                                                    | code                     | 82      | const | 1    | 100      | Using index    |
+| 1  | SIMPLE      | ui    | NULL       | ref   | uq_user_identities_provider_identifier,idx_user_identities_user | idx_user_identities_user | 8       | const | 3    | 43.75    | Using where    |
++----+-------------+-------+------------+-------+-----------------------------------------------------------------+--------------------------+---------+-------+------+----------+----------------+
+*/
+
 -- 5. Активні сесії акаунта («мої пристрої»)
 SELECT s.id, ca.code AS app, cp.name AS platform, s.device_name,
        INET6_NTOA(s.ip_address) AS ip, s.created_at, s.last_seen_at
@@ -142,6 +214,22 @@ WHERE s.user_id = 1 AND s.revoked_at IS NULL AND s.expires_at > UTC_TIMESTAMP();
         -> Single-row index lookup on ca using PRIMARY (id = s.app_id)  (cost=0.35 rows=1)
     -> Single-row index lookup on cp using PRIMARY (id = s.platform_id)  (cost=0.35 rows=1)
    сам запит повернув рядків: 0 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT s.id, ca.code AS app, cp.name AS platform, s.device_name,
+       INET6_NTOA(s.ip_address) AS ip, s.created_at, s.last_seen_at
+FROM user_sessions s
+JOIN client_apps ca      ON ca.id = s.app_id
+JOIN client_platforms cp ON cp.id = s.platform_id
+WHERE s.user_id = 1 AND s.revoked_at IS NULL AND s.expires_at > UTC_TIMESTAMP();
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+-------------------------------------------------------------------------------------------------+------------------------+---------+-----------------------+------+----------+------------------------------------+
+| id | select_type | table | partitions | type   | possible_keys                                                                                   | key                    | key_len | ref                   | rows | filtered | Extra                              |
++----+-------------+-------+------------+--------+-------------------------------------------------------------------------------------------------+------------------------+---------+-----------------------+------+----------+------------------------------------+
+| 1  | SIMPLE      | s     | NULL       | ref    | idx_user_sessions_user,idx_user_sessions_expires,fk_user_sessions_app,fk_user_sessions_platform | idx_user_sessions_user | 13      | const,const           | 1    | 100      | Using index condition; Using where |
+| 1  | SIMPLE      | ca    | NULL       | eq_ref | PRIMARY                                                                                         | PRIMARY                | 1       | veze_db.s.app_id      | 1    | 100      | NULL                               |
+| 1  | SIMPLE      | cp    | NULL       | eq_ref | PRIMARY                                                                                         | PRIMARY                | 1       | veze_db.s.platform_id | 1    | 100      | NULL                               |
++----+-------------+-------+------------+--------+-------------------------------------------------------------------------------------------------+------------------------+---------+-----------------------+------+----------+------------------------------------+
+*/
 
 -- 6. Звільнення: закрити доступ до панелі співробітника, сесії пасажира не чіпати
 --    (у транзакції разом з UPDATE employees SET dismissed_at = ...)
@@ -189,6 +277,22 @@ ORDER BY s.name, b.number;
                 -> Single-row index lookup on s using PRIMARY (id = b.street_id)  (cost=0.128 rows=1)
    сам запит повернув рядків: 15 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT b.id, CONCAT(s.name, ', ', b.number) AS address, b.name, c.name AS city,
+       ROUND(ST_Latitude(b.location), 6) AS lat, ROUND(ST_Longitude(b.location), 6) AS lng
+FROM buildings b
+JOIN streets s ON s.id = b.street_id
+JOIN cities c  ON c.id = s.city_id
+ORDER BY s.name, b.number;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+---------------------------------------------------------+------------------------+---------+---------------------+------+----------+----------------------------------------------+
+| id | select_type | table | partitions | type   | possible_keys                                           | key                    | key_len | ref                 | rows | filtered | Extra                                        |
++----+-------------+-------+------------+--------+---------------------------------------------------------+------------------------+---------+---------------------+------+----------+----------------------------------------------+
+| 1  | SIMPLE      | c     | NULL       | index  | PRIMARY                                                 | uq_cities_country_name | 404     | NULL                | 2    | 100      | Using index; Using temporary; Using filesort |
+| 1  | SIMPLE      | b     | NULL       | ALL    | uq_buildings_street_number                              | NULL                   | NULL    | NULL                | 15   | 100      | Using join buffer (hash join)                |
+| 1  | SIMPLE      | s     | NULL       | eq_ref | PRIMARY,uq_streets_city_type_name,idx_streets_city_name | PRIMARY                | 4       | veze_db.b.street_id | 1    | 100      | Using where                                  |
++----+-------------+-------+------------+--------+---------------------------------------------------------+------------------------+---------+---------------------+------+----------+----------------------------------------------+
+*/
+
 -- 2. Пошук вулиці за частиною назви (автопідказка)
 SELECT s.id, st.code AS type, s.name
 FROM streets s
@@ -204,6 +308,19 @@ WHERE s.city_id = 1 AND s.name LIKE CONCAT('Хре', '%');
     -> Index range scan on s using idx_streets_city_name over (city_id = 1 AND 'Хре' <= name <= 'Хре????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????'), with index condition: ((s.city_id = 1) and (s.`name` like <cache>(concat('Хре','%'))))  (cost=0.71 rows=1)
     -> Single-row index lookup on st using PRIMARY (id = s.type_id)  (cost=0.35 rows=1)
    сам запит повернув рядків: 1 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT s.id, st.code AS type, s.name
+FROM streets s
+JOIN street_types st ON st.id = s.type_id
+WHERE s.city_id = 1 AND s.name LIKE CONCAT('Хре', '%');
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+-----------------------------------------------------------------+-----------------------+---------+-------------------+------+----------+-----------------------+
+| id | select_type | table | partitions | type   | possible_keys                                                   | key                   | key_len | ref               | rows | filtered | Extra                 |
++----+-------------+-------+------------+--------+-----------------------------------------------------------------+-----------------------+---------+-------------------+------+----------+-----------------------+
+| 1  | SIMPLE      | s     | NULL       | range  | uq_streets_city_type_name,idx_streets_city_name,fk_streets_type | idx_streets_city_name | 606     | NULL              | 1    | 100      | Using index condition |
+| 1  | SIMPLE      | st    | NULL       | eq_ref | PRIMARY                                                         | PRIMARY               | 1       | veze_db.s.type_id | 1    | 100      | NULL                  |
++----+-------------+-------+------------+--------+-----------------------------------------------------------------+-----------------------+---------+-------------------+------+----------+-----------------------+
+*/
 
 -- 3. Найближчі активні точки посадки в радіусі 300 м від пасажира
 SET @me = ST_GeomFromText('POINT(50.4490 30.5230)', 4326);
@@ -233,6 +350,23 @@ ORDER BY distance_m;
             -> Single-row index lookup on b using PRIMARY (id = p.building_id)  (cost=0.256 rows=1)
    сам запит повернув рядків: 4 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT p.id, pk.code AS kind, COALESCE(p.name, b.name) AS name,
+       ROUND(ST_Distance(p.location, @me)) AS distance_m
+FROM pickup_points p
+JOIN pickup_point_kinds pk ON pk.id = p.kind_id
+LEFT JOIN buildings b ON b.id = p.building_id
+WHERE p.is_active AND ST_Distance(p.location, @me) <= 300
+ORDER BY distance_m;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+-----------------------+-----------------------+---------+-----------------------+------+----------+----------------------------------------------+
+| id | select_type | table | partitions | type   | possible_keys         | key                   | key_len | ref                   | rows | filtered | Extra                                        |
++----+-------------+-------+------------+--------+-----------------------+-----------------------+---------+-----------------------+------+----------+----------------------------------------------+
+| 1  | SIMPLE      | pk    | NULL       | index  | PRIMARY               | code                  | 82      | NULL                  | 3    | 100      | Using index; Using temporary; Using filesort |
+| 1  | SIMPLE      | p     | NULL       | ref    | fk_pickup_points_kind | fk_pickup_points_kind | 1       | veze_db.pk.id         | 6    | 90       | Using where                                  |
+| 1  | SIMPLE      | b     | NULL       | eq_ref | PRIMARY               | PRIMARY               | 8       | veze_db.p.building_id | 1    | 100      | NULL                                         |
++----+-------------+-------+------------+--------+-----------------------+-----------------------+---------+-----------------------+------+----------+----------------------------------------------+
+*/
+
 -- 4. Чи потрапляє точка в активну зону сервісу
 SELECT z.name, ST_Contains(z.area, @me) AS is_inside
 FROM service_zones z
@@ -245,6 +379,17 @@ WHERE z.city_id = 1 AND z.is_active;
 -> Filter: (0 <> z.is_active)  (cost=0.9 rows=4)
     -> Index lookup on z using fk_service_zones_city (city_id = 1)  (cost=0.9 rows=5)
    сам запит повернув рядків: 5 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT z.name, ST_Contains(z.area, @me) AS is_inside
+FROM service_zones z
+WHERE z.city_id = 1 AND z.is_active;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+------+-----------------------+-----------------------+---------+-------+------+----------+-------------+
+| id | select_type | table | partitions | type | possible_keys         | key                   | key_len | ref   | rows | filtered | Extra       |
++----+-------------+-------+------------+------+-----------------------+-----------------------+---------+-------+------+----------+-------------+
+| 1  | SIMPLE      | z     | NULL       | ref  | fk_service_zones_city | fk_service_zones_city | 4       | const | 5    | 80       | Using where |
++----+-------------+-------+------------+------+-----------------------+-----------------------+---------+-------+------+----------+-------------+
+*/
 
 -- 5. Граф доріг для маршруту: доступні ділянки з довжиною (рахується з координат вузлів).
 --    Ділянка недоступна, якщо перекрита сама (ремонт) або перекрито весь міст, на якому вона.
@@ -280,6 +425,26 @@ WHERE rs.is_active AND (br.id IS NULL OR br.is_active);
             -> Table scan on br  (cost=0.0168 rows=4)
    сам запит повернув рядків: 51 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT rs.id, s.name AS street, rs.from_node_id, rs.to_node_id, rs.max_speed_kmh,
+       ROUND(ST_Distance(a.location, b.location)) AS length_m
+FROM road_segments rs
+JOIN road_nodes a     ON a.id = rs.from_node_id
+JOIN road_nodes b     ON b.id = rs.to_node_id
+LEFT JOIN streets s   ON s.id = rs.street_id
+LEFT JOIN bridges br  ON br.street_id = rs.street_id
+WHERE rs.is_active AND (br.id IS NULL OR br.is_active);
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+---------------------------------------------+------------------------+---------+-----------------------+------+----------+--------------------------------------------+
+| id | select_type | table | partitions | type   | possible_keys                               | key                    | key_len | ref                   | rows | filtered | Extra                                      |
++----+-------------+-------+------------+--------+---------------------------------------------+------------------------+---------+-----------------------+------+----------+--------------------------------------------+
+| 1  | SIMPLE      | a     | NULL       | ALL    | PRIMARY                                     | NULL                   | NULL    | NULL                  | 22   | 100      | NULL                                       |
+| 1  | SIMPLE      | rs    | NULL       | ref    | uq_road_segments_nodes,idx_road_segments_to | uq_road_segments_nodes | 8       | veze_db.a.id          | 2    | 90       | Using where                                |
+| 1  | SIMPLE      | b     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.to_node_id | 1    | 100      | NULL                                       |
+| 1  | SIMPLE      | s     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 4       | veze_db.rs.street_id  | 1    | 100      | NULL                                       |
+| 1  | SIMPLE      | br    | NULL       | ALL    | street_id                                   | NULL                   | NULL    | NULL                  | 4    | 81.25    | Using where; Using join buffer (hash join) |
++----+-------------+-------+------------+--------+---------------------------------------------+------------------------+---------+-----------------------+------+----------+--------------------------------------------+
+*/
+
 -- 6. Найближче депо до вузла, де зараз авто
 SELECT d.name, ROUND(ST_Distance(d.location, n.location)) AS distance_m
 FROM depots d
@@ -300,6 +465,21 @@ LIMIT 1;
         -> Filter: (0 <> d.is_active)  (cost=0.35 rows=1)
             -> Table scan on d  (cost=0.35 rows=1)
    сам запит повернув рядків: 1 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT d.name, ROUND(ST_Distance(d.location, n.location)) AS distance_m
+FROM depots d
+CROSS JOIN road_nodes n
+WHERE n.id = 3 AND d.is_active
+ORDER BY distance_m
+LIMIT 1;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+-------+---------------+---------+---------+-------+------+----------+----------------+
+| id | select_type | table | partitions | type  | possible_keys | key     | key_len | ref   | rows | filtered | Extra          |
++----+-------------+-------+------------+-------+---------------+---------+---------+-------+------+----------+----------------+
+| 1  | SIMPLE      | n     | NULL       | const | PRIMARY       | PRIMARY | 8       | const | 1    | 100      | Using filesort |
+| 1  | SIMPLE      | d     | NULL       | ALL   | NULL          | NULL    | NULL    | NULL  | 1    | 100      | Using where    |
++----+-------------+-------+------------+-------+---------------+---------+---------+-------+------+----------+----------------+
+*/
 
 -- 7. Перекрити міст повністю й перевірити, що його ділянки зникли з графа, потім відкрити.
 --    У транзакції з ROLLBACK, щоб приклад не змінював тестові дані.
@@ -333,6 +513,23 @@ GROUP BY br.id, s.name, br.is_active, br.closure_note;
                 -> Single-row index lookup on s using PRIMARY (id = br.street_id)  (cost=0.35 rows=1)
             -> Covering index lookup on rs using fk_road_segments_street (street_id = br.street_id)  (cost=0.551 rows=3)
    сам запит повернув рядків: 1 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT s.name AS bridge, br.is_active, br.closure_note,
+       COUNT(rs.id) AS segments_closed
+FROM bridges br
+JOIN streets s             ON s.id = br.street_id
+LEFT JOIN road_segments rs ON rs.street_id = br.street_id
+WHERE NOT br.is_active
+GROUP BY br.id, s.name, br.is_active, br.closure_note;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+-------------------------+-------------------------+---------+----------------------+------+----------+------------------------------+
+| id | select_type | table | partitions | type   | possible_keys           | key                     | key_len | ref                  | rows | filtered | Extra                        |
++----+-------------+-------+------------+--------+-------------------------+-------------------------+---------+----------------------+------+----------+------------------------------+
+| 1  | SIMPLE      | br    | NULL       | ALL    | street_id               | NULL                    | NULL    | NULL                 | 4    | 25       | Using where; Using temporary |
+| 1  | SIMPLE      | s     | NULL       | eq_ref | PRIMARY                 | PRIMARY                 | 4       | veze_db.br.street_id | 1    | 100      | NULL                         |
+| 1  | SIMPLE      | rs    | NULL       | ref    | fk_road_segments_street | fk_road_segments_street | 5       | veze_db.br.street_id | 3    | 100      | Using index                  |
++----+-------------+-------+------------+--------+-------------------------+-------------------------+---------+----------------------+------+----------+------------------------------+
+*/
 
 -- відкриття: прапорець назад і причину прибрати (CHECK не дасть лишити її)
 UPDATE bridges SET is_active = TRUE, closure_note = NULL WHERE street_id = 11;
@@ -465,6 +662,61 @@ ORDER BY distance_m;
                                 -> Single-row index lookup on b using PRIMARY (id = rs.to_node_id)  (cost=0.254 rows=1)
                         -> Single-row index lookup on br using street_id (street_id = rs.street_id)  (cost=0.254 rows=1)
    сам запит повернув рядків: 2 */
+
+EXPLAIN FORMAT=TRADITIONAL WITH edges AS (
+    SELECT rs.id, rs.from_node_id, rs.to_node_id, br.id IS NOT NULL AS is_bridge,
+           ST_Distance(a.location, b.location) AS length_m
+    FROM road_segments rs
+    JOIN road_nodes a     ON a.id = rs.from_node_id
+    JOIN road_nodes b     ON b.id = rs.to_node_id
+    LEFT JOIN bridges br  ON br.street_id = rs.street_id
+    WHERE rs.is_active AND (br.id IS NULL OR br.is_active)
+)
+SELECT CONCAT_WS(' → ', e1.from_node_id, e1.to_node_id, e2.to_node_id, e3.to_node_id,
+                 e4.to_node_id) AS path,
+       ROUND(e1.length_m + COALESCE(e2.length_m, 0) + COALESCE(e3.length_m, 0)
+             + COALESCE(e4.length_m, 0)) AS distance_m,
+       e1.id AS s1, e2.id AS s2, e3.id AS s3, e4.id AS s4
+FROM edges e1
+LEFT JOIN edges e2
+    ON e2.from_node_id = e1.to_node_id AND e1.to_node_id <> @finish
+   AND e2.to_node_id <> e1.from_node_id
+   AND e1.length_m + e2.length_m < 3 * @direct
+LEFT JOIN edges e3
+    ON e3.from_node_id = e2.to_node_id AND e2.to_node_id <> @finish
+   AND e3.to_node_id NOT IN (e1.from_node_id, e1.to_node_id)
+   AND e1.length_m + e2.length_m + e3.length_m < 3 * @direct
+LEFT JOIN edges e4
+    ON e4.from_node_id = e3.to_node_id AND e3.to_node_id <> @finish
+   AND e4.to_node_id NOT IN (e1.from_node_id, e1.to_node_id, e2.to_node_id)
+   AND e1.length_m + e2.length_m + e3.length_m + e4.length_m < 3 * @direct
+WHERE e1.from_node_id = @start
+  AND @finish = COALESCE(e4.to_node_id, e3.to_node_id, e2.to_node_id, e1.to_node_id)
+  AND e1.is_bridge + COALESCE(e2.is_bridge, 0) + COALESCE(e3.is_bridge, 0)
+      + COALESCE(e4.is_bridge, 0) > 0
+ORDER BY distance_m;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+---------------------------------------------+------------------------+---------+-------------------------+------+----------+----------------------------------------------+
+| id | select_type | table | partitions | type   | possible_keys                               | key                    | key_len | ref                     | rows | filtered | Extra                                        |
++----+-------------+-------+------------+--------+---------------------------------------------+------------------------+---------+-------------------------+------+----------+----------------------------------------------+
+| 1  | SIMPLE      | rs    | NULL       | ref    | uq_road_segments_nodes,idx_road_segments_to | uq_road_segments_nodes | 8       | const                   | 3    | 90       | Using where; Using temporary; Using filesort |
+| 1  | SIMPLE      | a     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.from_node_id | 1    | 100      | NULL                                         |
+| 1  | SIMPLE      | b     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.to_node_id   | 1    | 100      | NULL                                         |
+| 1  | SIMPLE      | br    | NULL       | eq_ref | street_id                                   | street_id              | 4       | veze_db.rs.street_id    | 1    | 81.25    | Using where                                  |
+| 1  | SIMPLE      | a     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.to_node_id   | 1    | 100      | Using where                                  |
+| 1  | SIMPLE      | rs    | NULL       | ref    | uq_road_segments_nodes,idx_road_segments_to | uq_road_segments_nodes | 8       | veze_db.rs.to_node_id   | 2    | 100      | Using where                                  |
+| 1  | SIMPLE      | b     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.to_node_id   | 1    | 100      | Using where                                  |
+| 1  | SIMPLE      | br    | NULL       | eq_ref | street_id                                   | street_id              | 4       | veze_db.rs.street_id    | 1    | 100      | Using where                                  |
+| 1  | SIMPLE      | a     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.to_node_id   | 1    | 100      | Using where                                  |
+| 1  | SIMPLE      | rs    | NULL       | ref    | uq_road_segments_nodes,idx_road_segments_to | uq_road_segments_nodes | 8       | veze_db.rs.to_node_id   | 2    | 100      | Using where                                  |
+| 1  | SIMPLE      | b     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.to_node_id   | 1    | 100      | Using where                                  |
+| 1  | SIMPLE      | br    | NULL       | eq_ref | street_id                                   | street_id              | 4       | veze_db.rs.street_id    | 1    | 100      | Using where                                  |
+| 1  | SIMPLE      | a     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.to_node_id   | 1    | 100      | Using where                                  |
+| 1  | SIMPLE      | rs    | NULL       | ref    | uq_road_segments_nodes,idx_road_segments_to | uq_road_segments_nodes | 8       | veze_db.rs.to_node_id   | 2    | 100      | Using where                                  |
+| 1  | SIMPLE      | b     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.to_node_id   | 1    | 100      | Using where                                  |
+| 1  | SIMPLE      | br    | NULL       | eq_ref | street_id                                   | street_id              | 4       | veze_db.rs.street_id    | 1    | 100      | Using where                                  |
++----+-------------+-------+------------+--------+---------------------------------------------+------------------------+---------+-------------------------+------+----------+----------------------------------------------+
+*/
 
 -- 9. Той самий пошук, що й у запиті 8, але з назвами мостів на маршруті («міст Метро»).
 --    Змінні @start, @finish, @direct беруться із запиту 8 — запускати після нього в одній сесії.
@@ -600,6 +852,65 @@ ORDER BY distance_m;
                             -> Single-row index lookup on br using street_id (street_id = rs.street_id)  (cost=0.254 rows=1)
    сам запит повернув рядків: 2 */
 
+EXPLAIN FORMAT=TRADITIONAL WITH edges AS (
+    SELECT rs.id, rs.from_node_id, rs.to_node_id, ST_Distance(a.location, b.location) AS length_m,
+           CASE WHEN br.id IS NOT NULL THEN CONCAT('міст ', s.name) END AS bridge_name
+    FROM road_segments rs
+    JOIN road_nodes a     ON a.id = rs.from_node_id
+    JOIN road_nodes b     ON b.id = rs.to_node_id
+    LEFT JOIN streets s   ON s.id = rs.street_id
+    LEFT JOIN bridges br  ON br.street_id = rs.street_id
+    WHERE rs.is_active AND (br.id IS NULL OR br.is_active)
+)
+SELECT CONCAT_WS(' → ', e1.from_node_id, e1.to_node_id, e2.to_node_id, e3.to_node_id,
+                 e4.to_node_id) AS path,
+       CONCAT_WS(', ', e1.bridge_name, e2.bridge_name, e3.bridge_name, e4.bridge_name) AS bridges,
+       ROUND(e1.length_m + COALESCE(e2.length_m, 0) + COALESCE(e3.length_m, 0)
+             + COALESCE(e4.length_m, 0)) AS distance_m
+FROM edges e1
+LEFT JOIN edges e2
+    ON e2.from_node_id = e1.to_node_id AND e1.to_node_id <> @finish
+   AND e2.to_node_id <> e1.from_node_id
+   AND e1.length_m + e2.length_m < 3 * @direct
+LEFT JOIN edges e3
+    ON e3.from_node_id = e2.to_node_id AND e2.to_node_id <> @finish
+   AND e3.to_node_id NOT IN (e1.from_node_id, e1.to_node_id)
+   AND e1.length_m + e2.length_m + e3.length_m < 3 * @direct
+LEFT JOIN edges e4
+    ON e4.from_node_id = e3.to_node_id AND e3.to_node_id <> @finish
+   AND e4.to_node_id NOT IN (e1.from_node_id, e1.to_node_id, e2.to_node_id)
+   AND e1.length_m + e2.length_m + e3.length_m + e4.length_m < 3 * @direct
+WHERE e1.from_node_id = @start
+  AND @finish = COALESCE(e4.to_node_id, e3.to_node_id, e2.to_node_id, e1.to_node_id)
+HAVING bridges <> ''
+ORDER BY distance_m;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+---------------------------------------------+------------------------+---------+-------------------------+------+----------+----------------------------------------------+
+| id | select_type | table | partitions | type   | possible_keys                               | key                    | key_len | ref                     | rows | filtered | Extra                                        |
++----+-------------+-------+------------+--------+---------------------------------------------+------------------------+---------+-------------------------+------+----------+----------------------------------------------+
+| 1  | SIMPLE      | rs    | NULL       | ref    | uq_road_segments_nodes,idx_road_segments_to | uq_road_segments_nodes | 8       | const                   | 3    | 90       | Using where; Using temporary; Using filesort |
+| 1  | SIMPLE      | a     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.from_node_id | 1    | 100      | NULL                                         |
+| 1  | SIMPLE      | b     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.to_node_id   | 1    | 100      | NULL                                         |
+| 1  | SIMPLE      | s     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 4       | veze_db.rs.street_id    | 1    | 100      | NULL                                         |
+| 1  | SIMPLE      | br    | NULL       | eq_ref | street_id                                   | street_id              | 4       | veze_db.rs.street_id    | 1    | 81.25    | Using where                                  |
+| 1  | SIMPLE      | a     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.to_node_id   | 1    | 100      | Using where                                  |
+| 1  | SIMPLE      | rs    | NULL       | ref    | uq_road_segments_nodes,idx_road_segments_to | uq_road_segments_nodes | 8       | veze_db.rs.to_node_id   | 2    | 100      | Using where                                  |
+| 1  | SIMPLE      | b     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.to_node_id   | 1    | 100      | Using where                                  |
+| 1  | SIMPLE      | s     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 4       | veze_db.rs.street_id    | 1    | 100      | NULL                                         |
+| 1  | SIMPLE      | br    | NULL       | eq_ref | street_id                                   | street_id              | 4       | veze_db.rs.street_id    | 1    | 100      | Using where                                  |
+| 1  | SIMPLE      | a     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.to_node_id   | 1    | 100      | Using where                                  |
+| 1  | SIMPLE      | rs    | NULL       | ref    | uq_road_segments_nodes,idx_road_segments_to | uq_road_segments_nodes | 8       | veze_db.rs.to_node_id   | 2    | 100      | Using where                                  |
+| 1  | SIMPLE      | b     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.to_node_id   | 1    | 100      | Using where                                  |
+| 1  | SIMPLE      | s     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 4       | veze_db.rs.street_id    | 1    | 100      | NULL                                         |
+| 1  | SIMPLE      | br    | NULL       | eq_ref | street_id                                   | street_id              | 4       | veze_db.rs.street_id    | 1    | 100      | Using where                                  |
+| 1  | SIMPLE      | a     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.to_node_id   | 1    | 100      | Using where                                  |
+| 1  | SIMPLE      | rs    | NULL       | ref    | uq_road_segments_nodes,idx_road_segments_to | uq_road_segments_nodes | 8       | veze_db.rs.to_node_id   | 2    | 100      | Using where                                  |
+| 1  | SIMPLE      | b     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.to_node_id   | 1    | 100      | Using where                                  |
+| 1  | SIMPLE      | s     | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 4       | veze_db.rs.street_id    | 1    | 100      | NULL                                         |
+| 1  | SIMPLE      | br    | NULL       | eq_ref | street_id                                   | street_id              | 4       | veze_db.rs.street_id    | 1    | 100      | Using where                                  |
++----+-------------+-------+------------+--------+---------------------------------------------+------------------------+---------+-------------------------+------+----------+----------------------------------------------+
+*/
+
 -- 10. Маршрути через міст рекурсивним CTE: глибина не обмежена 4 ділянками, як у запиті 8–9.
 --     Змінні @start, @finish, @direct — із запиту 8 (виконувати в одній сесії).
 --     Кожен крок рекурсії додає одну ділянку; path — рядок пройдених вузлів ',1,10,', за ним
@@ -686,6 +997,47 @@ ORDER BY distance_m;
                                 -> Single-row index lookup on s using PRIMARY (id = rs.street_id)  (cost=0.298 rows=1)
                             -> Single-row index lookup on br using street_id (street_id = rs.street_id)  (cost=0.289 rows=1)
    сам запит повернув рядків: 2 */
+
+EXPLAIN FORMAT=TRADITIONAL WITH RECURSIVE edges AS (
+    SELECT rs.from_node_id, rs.to_node_id, ST_Distance(a.location, b.location) AS length_m,
+           CASE WHEN br.id IS NOT NULL THEN CONCAT('міст ', s.name) END AS bridge_name
+    FROM road_segments rs
+    JOIN road_nodes a     ON a.id = rs.from_node_id
+    JOIN road_nodes b     ON b.id = rs.to_node_id
+    LEFT JOIN streets s   ON s.id = rs.street_id
+    LEFT JOIN bridges br  ON br.street_id = rs.street_id
+    WHERE rs.is_active AND (br.id IS NULL OR br.is_active)
+), routes AS (
+    SELECT @start AS node_id, CAST(CONCAT(',', @start, ',') AS CHAR(255)) AS path,
+           CAST(0 AS DOUBLE) AS distance_m, 0 AS hops, CAST(NULL AS CHAR(500)) AS bridges
+    UNION ALL
+    SELECT e.to_node_id, CONCAT(r.path, e.to_node_id, ','), r.distance_m + e.length_m, r.hops + 1,
+           CASE WHEN e.bridge_name IS NULL OR LOCATE(e.bridge_name, COALESCE(r.bridges, '')) > 0
+                THEN r.bridges ELSE CONCAT_WS(', ', r.bridges, e.bridge_name) END
+    FROM routes r
+    JOIN edges e ON e.from_node_id = r.node_id
+    WHERE r.node_id <> @finish AND r.hops < 12
+      AND LOCATE(CONCAT(',', e.to_node_id, ','), r.path) = 0
+      AND r.distance_m + e.length_m < 3 * @direct
+)
+SELECT REPLACE(TRIM(BOTH ',' FROM path), ',', ' → ') AS path, bridges, ROUND(distance_m) AS distance_m
+FROM routes
+WHERE node_id = @finish AND bridges IS NOT NULL
+ORDER BY distance_m;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------------+------------+------------+--------+---------------------------------------------+------------------------+---------+-------------------------+------+----------+------------------------------------+
+| id | select_type       | table      | partitions | type   | possible_keys                               | key                    | key_len | ref                     | rows | filtered | Extra                              |
++----+-------------------+------------+------------+--------+---------------------------------------------+------------------------+---------+-------------------------+------+----------+------------------------------------+
+| 1  | PRIMARY           | <derived2> | NULL       | ALL    | NULL                                        | NULL                   | NULL    | NULL                    | 3    | 33.33    | Using where; Using filesort        |
+| 2  | DERIVED           | NULL       | NULL       | NULL   | NULL                                        | NULL                   | NULL    | NULL                    | NULL | NULL     | No tables used                     |
+| 3  | UNCACHEABLE UNION | r          | NULL       | ALL    | NULL                                        | NULL                   | NULL    | NULL                    | 2    | 50       | Recursive; Using where             |
+| 3  | UNCACHEABLE UNION | rs         | NULL       | ref    | uq_road_segments_nodes,idx_road_segments_to | uq_road_segments_nodes | 8       | r.node_id               | 2    | 90       | Using index condition; Using where |
+| 3  | UNCACHEABLE UNION | a          | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.from_node_id | 1    | 100      | NULL                               |
+| 3  | UNCACHEABLE UNION | b          | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.to_node_id   | 1    | 100      | Using where                        |
+| 3  | UNCACHEABLE UNION | s          | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 4       | veze_db.rs.street_id    | 1    | 100      | NULL                               |
+| 3  | UNCACHEABLE UNION | br         | NULL       | eq_ref | street_id                                   | street_id              | 4       | veze_db.rs.street_id    | 1    | 81.25    | Using where                        |
++----+-------------------+------------+------------+--------+---------------------------------------------+------------------------+---------+-------------------------+------+----------+------------------------------------+
+*/
 
 -- 11. Найшвидший маршрут (за часом, а не за довжиною) — один рядок. Вага ділянки = довжина /
 --     max_speed_kmh, тому довша дорога з більшою швидкістю може виграти. Це ближче до реальної
@@ -783,6 +1135,52 @@ LIMIT 1;
                             -> Single-row index lookup on br using street_id (street_id = rs.street_id)  (cost=0.289 rows=1)
    сам запит повернув рядків: 1 */
 
+EXPLAIN FORMAT=TRADITIONAL WITH RECURSIVE edges AS (
+    SELECT rs.from_node_id, rs.to_node_id, ST_Distance(a.location, b.location) AS length_m,
+           ST_Distance(a.location, b.location) / (rs.max_speed_kmh / 3.6) AS time_s,
+           CASE WHEN br.id IS NOT NULL THEN CONCAT('міст ', s.name) END AS bridge_name
+    FROM road_segments rs
+    JOIN road_nodes a     ON a.id = rs.from_node_id
+    JOIN road_nodes b     ON b.id = rs.to_node_id
+    LEFT JOIN streets s   ON s.id = rs.street_id
+    LEFT JOIN bridges br  ON br.street_id = rs.street_id
+    WHERE rs.is_active AND (br.id IS NULL OR br.is_active)
+), routes AS (
+    SELECT @start AS node_id, CAST(CONCAT(',', @start, ',') AS CHAR(255)) AS path,
+           CAST(0 AS DOUBLE) AS distance_m, CAST(0 AS DOUBLE) AS time_s, 0 AS hops,
+           CAST(NULL AS CHAR(500)) AS bridges
+    UNION ALL
+    SELECT e.to_node_id, CONCAT(r.path, e.to_node_id, ','), r.distance_m + e.length_m,
+           r.time_s + e.time_s, r.hops + 1,
+           CASE WHEN e.bridge_name IS NULL OR LOCATE(e.bridge_name, COALESCE(r.bridges, '')) > 0
+                THEN r.bridges ELSE CONCAT_WS(', ', r.bridges, e.bridge_name) END
+    FROM routes r
+    JOIN edges e ON e.from_node_id = r.node_id
+    WHERE r.node_id <> @finish AND r.hops < 12
+      AND LOCATE(CONCAT(',', e.to_node_id, ','), r.path) = 0
+      AND r.distance_m + e.length_m < 3 * @direct
+)
+SELECT REPLACE(TRIM(BOTH ',' FROM path), ',', ' → ') AS path, bridges,
+       ROUND(distance_m) AS distance_m, ROUND(time_s / 60, 1) AS eta_min
+FROM routes
+WHERE node_id = @finish
+ORDER BY time_s
+LIMIT 1;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------------+------------+------------+--------+---------------------------------------------+------------------------+---------+-------------------------+------+----------+------------------------------------+
+| id | select_type       | table      | partitions | type   | possible_keys                               | key                    | key_len | ref                     | rows | filtered | Extra                              |
++----+-------------------+------------+------------+--------+---------------------------------------------+------------------------+---------+-------------------------+------+----------+------------------------------------+
+| 1  | PRIMARY           | <derived2> | NULL       | ref    | <auto_key0>                                 | <auto_key0>            | 9       | const                   | 1    | 100      | Using filesort                     |
+| 2  | DERIVED           | NULL       | NULL       | NULL   | NULL                                        | NULL                   | NULL    | NULL                    | NULL | NULL     | No tables used                     |
+| 3  | UNCACHEABLE UNION | r          | NULL       | ALL    | NULL                                        | NULL                   | NULL    | NULL                    | 2    | 50       | Recursive; Using where             |
+| 3  | UNCACHEABLE UNION | rs         | NULL       | ref    | uq_road_segments_nodes,idx_road_segments_to | uq_road_segments_nodes | 8       | r.node_id               | 2    | 90       | Using index condition; Using where |
+| 3  | UNCACHEABLE UNION | a          | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.from_node_id | 1    | 100      | NULL                               |
+| 3  | UNCACHEABLE UNION | b          | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 8       | veze_db.rs.to_node_id   | 1    | 100      | Using where                        |
+| 3  | UNCACHEABLE UNION | s          | NULL       | eq_ref | PRIMARY                                     | PRIMARY                | 4       | veze_db.rs.street_id    | 1    | 100      | NULL                               |
+| 3  | UNCACHEABLE UNION | br         | NULL       | eq_ref | street_id                                   | street_id              | 4       | veze_db.rs.street_id    | 1    | 81.25    | Using where                        |
++----+-------------------+------------+------------+--------+---------------------------------------------+------------------------+---------+-------------------------+------+----------+------------------------------------+
+*/
+
 -- 12. Які вузли графа є кінцями мостів. Точка (вузол) сама не знає, що вона «міст»:
 --     міст — це вулиця типу bridge, а вузол належить мосту, якщо до нього веде або від нього
 --     йде ділянка цього моста. Вузол може бути кінцем кількох ділянок і мостів одночасно.
@@ -819,6 +1217,26 @@ ORDER BY s.name, n.id;
                     -> Index range scan on n (re-planned for each iteration)  (cost=0.0581 rows=22)
    сам запит повернув рядків: 8 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT CONCAT('міст ', s.name) AS bridge, n.id AS node_id,
+       ROUND(ST_Latitude(n.location), 4) AS lat, ROUND(ST_Longitude(n.location), 4) AS lng,
+       br.is_active AS is_open
+FROM bridges br
+JOIN streets s        ON s.id = br.street_id
+JOIN road_segments rs ON rs.street_id = br.street_id
+JOIN road_nodes n     ON n.id IN (rs.from_node_id, rs.to_node_id)
+GROUP BY br.id, s.name, n.id, n.location, br.is_active
+ORDER BY s.name, n.id;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+-------------------------+-------------------------+---------+----------------------+------+----------+------------------------------------------------+
+| id | select_type | table | partitions | type   | possible_keys           | key                     | key_len | ref                  | rows | filtered | Extra                                          |
++----+-------------+-------+------------+--------+-------------------------+-------------------------+---------+----------------------+------+----------+------------------------------------------------+
+| 1  | SIMPLE      | br    | NULL       | ALL    | street_id               | NULL                    | NULL    | NULL                 | 4    | 100      | Using temporary; Using filesort                |
+| 1  | SIMPLE      | s     | NULL       | eq_ref | PRIMARY                 | PRIMARY                 | 4       | veze_db.br.street_id | 1    | 100      | NULL                                           |
+| 1  | SIMPLE      | rs    | NULL       | ref    | fk_road_segments_street | fk_road_segments_street | 5       | veze_db.br.street_id | 3    | 100      | NULL                                           |
+| 1  | SIMPLE      | n     | NULL       | ALL    | PRIMARY                 | NULL                    | NULL    | NULL                 | 22   | 20       | Range checked for each record (index map: 0x1) |
++----+-------------+-------+------------+--------+-------------------------+-------------------------+---------+----------------------+------+----------+------------------------------------------------+
+*/
+
 
 -- #####################################################################
 -- payments-feedback-examples.sql
@@ -848,6 +1266,23 @@ ORDER BY p.created_at;
     -> Single-row index lookup on po using PRIMARY (id = p.operation_id)  (cost=0.283 rows=1)
    сам запит повернув рядків: 3 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT p.id, po.name AS operation, ps.name AS status, p.amount, p.parent_payment_id,
+       p.error_message, p.created_at
+FROM payments p
+JOIN payment_operations po ON po.id = p.operation_id
+JOIN payment_statuses ps   ON ps.id = p.status_id
+WHERE p.ride_id = 2
+ORDER BY p.created_at;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+------------------------------------------------------------+-------------------+---------+------------------------+------+----------+-------+
+| id | select_type | table | partitions | type   | possible_keys                                              | key               | key_len | ref                    | rows | filtered | Extra |
++----+-------------+-------+------------+--------+------------------------------------------------------------+-------------------+---------+------------------------+------+----------+-------+
+| 1  | SIMPLE      | p     | NULL       | ref    | idx_payments_ride,fk_payments_operation,fk_payments_status | idx_payments_ride | 8       | const                  | 3    | 100      | NULL  |
+| 1  | SIMPLE      | ps    | NULL       | eq_ref | PRIMARY                                                    | PRIMARY           | 1       | veze_db.p.status_id    | 1    | 100      | NULL  |
+| 1  | SIMPLE      | po    | NULL       | eq_ref | PRIMARY                                                    | PRIMARY           | 1       | veze_db.p.operation_id | 1    | 100      | NULL  |
++----+-------------+-------+------------+--------+------------------------------------------------------------+-------------------+---------+------------------------+------+----------+-------+
+*/
+
 -- 2. Борги: завершені поїздки з сумою до сплати без успішного списання
 --    (з боргом застосунок не приймає нових поїздок)
 SELECT r.id, r.passenger_id, r.final_price
@@ -866,6 +1301,19 @@ WHERE r.status_id = 6 AND r.final_price > 0 AND p.id IS NULL;
             -> Index lookup on r using idx_rides_status (status_id = 6)  (cost=0.567 rows=2)
         -> Single-row covering index lookup on p using uq_payments_paid_ride (paid_ride_key = r.id)  (cost=0.269 rows=1)
    сам запит повернув рядків: 0 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT r.id, r.passenger_id, r.final_price
+FROM rides r
+LEFT JOIN payments p ON p.paid_ride_key = r.id
+WHERE r.status_id = 6 AND r.final_price > 0 AND p.id IS NULL;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+-----------------------+-----------------------+---------+--------------+------+----------+--------------------------------------+
+| id | select_type | table | partitions | type   | possible_keys         | key                   | key_len | ref          | rows | filtered | Extra                                |
++----+-------------+-------+------------+--------+-----------------------+-----------------------+---------+--------------+------+----------+--------------------------------------+
+| 1  | SIMPLE      | r     | NULL       | ref    | idx_rides_status      | idx_rides_status      | 1       | const        | 2    | 33.33    | Using where                          |
+| 1  | SIMPLE      | p     | NULL       | eq_ref | uq_payments_paid_ride | uq_payments_paid_ride | 9       | veze_db.r.id | 1    | 12.5     | Using where; Not exists; Using index |
++----+-------------+-------+------------+--------+-----------------------+-----------------------+---------+--------------+------+----------+--------------------------------------+
+*/
 
 -- 3. Виручка за період: списання мінус повернення
 SELECT SUM(CASE po.code WHEN 'capture' THEN p.amount WHEN 'refund' THEN -p.amount END) AS revenue
@@ -886,6 +1334,21 @@ WHERE p.completed_at >= '2026-09-01' AND p.completed_at < '2026-11-01';
             -> Index lookup on p using fk_payments_status (status_id = '2')  (cost=0.588 rows=7)
         -> Single-row index lookup on po using PRIMARY (id = p.operation_id)  (cost=0.364 rows=1)
    сам запит повернув рядків: 1 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT SUM(CASE po.code WHEN 'capture' THEN p.amount WHEN 'refund' THEN -p.amount END) AS revenue
+FROM payments p
+JOIN payment_operations po ON po.id = p.operation_id
+JOIN payment_statuses ps   ON ps.id = p.status_id AND ps.code = 'succeeded'
+WHERE p.completed_at >= '2026-09-01' AND p.completed_at < '2026-11-01';
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+------------------------------------------+--------------------+---------+------------------------+------+----------+-------------+
+| id | select_type | table | partitions | type   | possible_keys                            | key                | key_len | ref                    | rows | filtered | Extra       |
++----+-------------+-------+------------+--------+------------------------------------------+--------------------+---------+------------------------+------+----------+-------------+
+| 1  | SIMPLE      | ps    | NULL       | const  | PRIMARY,code                             | code               | 82      | const                  | 1    | 100      | Using index |
+| 1  | SIMPLE      | p     | NULL       | ref    | fk_payments_operation,fk_payments_status | fk_payments_status | 1       | const                  | 7    | 12.5     | Using where |
+| 1  | SIMPLE      | po    | NULL       | eq_ref | PRIMARY                                  | PRIMARY            | 1       | veze_db.p.operation_id | 1    | 100      | NULL        |
++----+-------------+-------+------------+--------+------------------------------------------+--------------------+---------+------------------------+------+----------+-------------+
+*/
 
 -- 4. Середня оцінка й найчастіші скарги по класах (звіт адміна)
 SELECT vc.name AS class, ROUND(AVG(rt.score), 2) AS avg_score, COUNT(*) AS ratings
@@ -913,6 +1376,23 @@ GROUP BY vc.id, vc.name;
             -> Single-row index lookup on vc using PRIMARY (id = t.class_id)  (cost=0.3 rows=1)
    сам запит повернув рядків: 2 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT vc.name AS class, ROUND(AVG(rt.score), 2) AS avg_score, COUNT(*) AS ratings
+FROM ratings rt
+JOIN rides r            ON r.id = rt.ride_id
+JOIN tariffs t          ON t.id = r.tariff_id
+JOIN vehicle_classes vc ON vc.id = t.class_id
+GROUP BY vc.id, vc.name;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+--------------------------+---------+---------+---------------------+------+----------+-----------------+
+| id | select_type | table | partitions | type   | possible_keys            | key     | key_len | ref                 | rows | filtered | Extra           |
++----+-------------+-------+------------+--------+--------------------------+---------+---------+---------------------+------+----------+-----------------+
+| 1  | SIMPLE      | rt    | NULL       | ALL    | PRIMARY                  | NULL    | NULL    | NULL                | 2    | 100      | Using temporary |
+| 1  | SIMPLE      | r     | NULL       | eq_ref | PRIMARY,fk_rides_tariff  | PRIMARY | 8       | veze_db.rt.ride_id  | 1    | 100      | NULL            |
+| 1  | SIMPLE      | t     | NULL       | eq_ref | PRIMARY,fk_tariffs_class | PRIMARY | 4       | veze_db.r.tariff_id | 1    | 100      | NULL            |
+| 1  | SIMPLE      | vc    | NULL       | eq_ref | PRIMARY                  | PRIMARY | 1       | veze_db.t.class_id  | 1    | 100      | NULL            |
++----+-------------+-------+------------+--------+--------------------------+---------+---------+---------------------+------+----------+-----------------+
+*/
+
 SELECT tg.name AS complaint, COUNT(*) AS times
 FROM rating_tag_links l
 JOIN rating_tags tg ON tg.id = l.tag_id AND NOT tg.is_positive
@@ -933,6 +1413,20 @@ ORDER BY times DESC;
                 -> Filter: (tg.is_positive = 0)  (cost=0.253 rows=0.1)
                     -> Single-row index lookup on tg using PRIMARY (id = l.tag_id)  (cost=0.253 rows=1)
    сам запит повернув рядків: 1 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT tg.name AS complaint, COUNT(*) AS times
+FROM rating_tag_links l
+JOIN rating_tags tg ON tg.id = l.tag_id AND NOT tg.is_positive
+GROUP BY tg.id, tg.name
+ORDER BY times DESC;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+--------------------------+--------------------------+---------+------------------+------+----------+----------------------------------------------+
+| id | select_type | table | partitions | type   | possible_keys            | key                      | key_len | ref              | rows | filtered | Extra                                        |
++----+-------------+-------+------------+--------+--------------------------+--------------------------+---------+------------------+------+----------+----------------------------------------------+
+| 1  | SIMPLE      | l     | NULL       | index  | idx_rating_tag_links_tag | idx_rating_tag_links_tag | 1       | NULL             | 3    | 100      | Using index; Using temporary; Using filesort |
+| 1  | SIMPLE      | tg    | NULL       | eq_ref | PRIMARY                  | PRIMARY                  | 1       | veze_db.l.tag_id | 1    | 10       | Using where                                  |
++----+-------------+-------+------------+--------+--------------------------+--------------------------+---------+------------------+------+----------+----------------------------------------------+
+*/
 
 -- 5. Стрічка оператора: відкриті інциденти, серйозніші й старші — вище
 SELECT i.id, it.name AS type, sv.name AS severity, st.name AS status,
@@ -978,6 +1472,31 @@ ORDER BY i.severity_id DESC, i.created_at;
             -> Single-row index lookup on it using PRIMARY (id = i.type_id)  (cost=0.0812 rows=1)
    сам запит повернув рядків: 1 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT i.id, it.name AS type, sv.name AS severity, st.name AS status,
+       COALESCE(v.plate_number, rv.plate_number) AS plate, i.description, i.created_at
+FROM incidents i
+JOIN incident_types it      ON it.id = i.type_id
+JOIN incident_severities sv ON sv.id = i.severity_id
+JOIN incident_statuses st   ON st.id = i.status_id
+LEFT JOIN vehicles v        ON v.id = i.vehicle_id
+LEFT JOIN rides r           ON r.id = i.ride_id
+LEFT JOIN vehicles rv       ON rv.id = r.vehicle_id
+WHERE st.code <> 'resolved'
+ORDER BY i.severity_id DESC, i.created_at;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+------------------------------------------------------------+---------+---------+----------------------+------+----------+--------------------------------------------+
+| id | select_type | table | partitions | type   | possible_keys                                              | key     | key_len | ref                  | rows | filtered | Extra                                      |
++----+-------------+-------+------------+--------+------------------------------------------------------------+---------+---------+----------------------+------+----------+--------------------------------------------+
+| 1  | SIMPLE      | sv    | NULL       | ALL    | PRIMARY                                                    | NULL    | NULL    | NULL                 | 4    | 100      | Using temporary; Using filesort            |
+| 1  | SIMPLE      | i     | NULL       | ALL    | idx_incidents_feed,fk_incidents_type,fk_incidents_severity | NULL    | NULL    | NULL                 | 4    | 33.33    | Using where; Using join buffer (hash join) |
+| 1  | SIMPLE      | st    | NULL       | eq_ref | PRIMARY,code                                               | PRIMARY | 1       | veze_db.i.status_id  | 1    | 100      | Using where                                |
+| 1  | SIMPLE      | v     | NULL       | eq_ref | PRIMARY                                                    | PRIMARY | 4       | veze_db.i.vehicle_id | 1    | 100      | NULL                                       |
+| 1  | SIMPLE      | r     | NULL       | eq_ref | PRIMARY                                                    | PRIMARY | 8       | veze_db.i.ride_id    | 1    | 100      | NULL                                       |
+| 1  | SIMPLE      | rv    | NULL       | eq_ref | PRIMARY                                                    | PRIMARY | 4       | veze_db.r.vehicle_id | 1    | 100      | NULL                                       |
+| 1  | SIMPLE      | it    | NULL       | eq_ref | PRIMARY                                                    | PRIMARY | 1       | veze_db.i.type_id    | 1    | 100      | NULL                                       |
++----+-------------+-------+------------+--------+------------------------------------------------------------+---------+---------+----------------------+------+----------+--------------------------------------------+
+*/
+
 -- 6. Показники співробітника: час реакції й оцінка допомоги
 SELECT e.first_name, COUNT(*) AS incidents,
        ROUND(AVG(TIMESTAMPDIFF(SECOND, i.created_at, i.assigned_at))) AS avg_reaction_s,
@@ -999,6 +1518,21 @@ GROUP BY e.id, e.first_name;
             -> Table scan on e  (cost=0.55 rows=3)
             -> Index lookup on i using idx_incidents_assigned (assigned_employee_id = e.id)  (cost=0.378 rows=1.33)
    сам запит повернув рядків: 2 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT e.first_name, COUNT(*) AS incidents,
+       ROUND(AVG(TIMESTAMPDIFF(SECOND, i.created_at, i.assigned_at))) AS avg_reaction_s,
+       ROUND(AVG(i.help_score), 2) AS avg_help_score
+FROM incidents i
+JOIN employees e ON e.id = i.assigned_employee_id
+GROUP BY e.id, e.first_name;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+------+------------------------+------------------------+---------+--------------+------+----------+-----------------+
+| id | select_type | table | partitions | type | possible_keys          | key                    | key_len | ref          | rows | filtered | Extra           |
++----+-------------+-------+------------+------+------------------------+------------------------+---------+--------------+------+----------+-----------------+
+| 1  | SIMPLE      | e     | NULL       | ALL  | PRIMARY                | NULL                   | NULL    | NULL         | 3    | 100      | Using temporary |
+| 1  | SIMPLE      | i     | NULL       | ref  | idx_incidents_assigned | idx_incidents_assigned | 5       | veze_db.e.id | 1    | 100      | NULL            |
++----+-------------+-------+------------+------+------------------------+------------------------+---------+--------------+------+----------+-----------------+
+*/
 
 -- 7. Поведінка пасажира — факти замість рейтингу: інциденти з його вини, неявки, борги
 SELECT p.id, p.first_name,
@@ -1034,6 +1568,28 @@ FROM passengers p;
         -> Filter: (r.passenger_id = p.id)  (cost=0.275 rows=0.25)
             -> Index lookup on r using fk_rides_cancel_reason (cancel_reason_id = '2')  (cost=0.275 rows=1)
    сам запит повернув рядків: 3 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT p.id, p.first_name,
+       (SELECT COUNT(*) FROM incidents i
+        JOIN rides r ON r.id = i.ride_id
+        JOIN incident_culprits c ON c.id = i.culprit_id AND c.code = 'passenger'
+        WHERE r.passenger_id = p.id) AS culprit_incidents,
+       (SELECT COUNT(*) FROM rides r
+        JOIN ride_cancel_reasons cr ON cr.id = r.cancel_reason_id AND cr.code = 'passenger_no_show'
+        WHERE r.passenger_id = p.id) AS no_shows
+FROM passengers p;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+--------------------+-------+------------+--------+--------------------------------------------+------------------------+---------+-------------------+------+----------+-------------+
+| id | select_type        | table | partitions | type   | possible_keys                              | key                    | key_len | ref               | rows | filtered | Extra       |
++----+--------------------+-------+------------+--------+--------------------------------------------+------------------------+---------+-------------------+------+----------+-------------+
+| 1  | PRIMARY            | p     | NULL       | ALL    | NULL                                       | NULL                   | NULL    | NULL              | 3    | 100      | NULL        |
+| 3  | DEPENDENT SUBQUERY | cr    | NULL       | const  | PRIMARY,code                               | code                   | 122     | const             | 1    | 100      | Using index |
+| 3  | DEPENDENT SUBQUERY | r     | NULL       | ref    | idx_rides_passenger,fk_rides_cancel_reason | fk_rides_cancel_reason | 2       | const             | 1    | 25       | Using where |
+| 2  | DEPENDENT SUBQUERY | c     | NULL       | const  | PRIMARY,code                               | code                   | 82      | const             | 1    | 100      | Using index |
+| 2  | DEPENDENT SUBQUERY | i     | NULL       | ref    | idx_incidents_ride,fk_incidents_culprit    | fk_incidents_culprit   | 2       | const             | 1    | 100      | Using where |
+| 2  | DEPENDENT SUBQUERY | r     | NULL       | eq_ref | PRIMARY,idx_rides_passenger                | PRIMARY                | 8       | veze_db.i.ride_id | 1    | 25       | Using where |
++----+--------------------+-------+------------+--------+--------------------------------------------+------------------------+---------+-------------------+------+----------+-------------+
+*/
 
 
 -- #####################################################################
@@ -1085,6 +1641,31 @@ WHERE rs.city_id = @cityId AND (rs.weekdays & @dayBit)
             -> Single-row index lookup on rk using PRIMARY (id = rs.kind_id)  (cost=0.43 rows=1)
    сам запит повернув рядків: 2 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT rk.code, rk.blocks_new_rides, rk.disables_surge, rk.free_cancellation, rk.warning_text
+FROM service_restrictions sr
+JOIN restriction_kinds rk ON rk.id = sr.kind_id
+WHERE sr.city_id = @cityId AND sr.starts_at <= @atUtc AND (sr.ends_at IS NULL OR sr.ends_at > @atUtc)
+UNION
+SELECT rk.code, rk.blocks_new_rides, rk.disables_surge, rk.free_cancellation, rk.warning_text
+FROM service_restriction_schedules rs
+JOIN restriction_kinds rk ON rk.id = rs.kind_id
+WHERE rs.city_id = @cityId AND (rs.weekdays & @dayBit)
+  AND DATE(@localTime) >= rs.valid_from AND (rs.valid_to IS NULL OR DATE(@localTime) <= rs.valid_to)
+  AND IF(rs.starts_at < rs.ends_at,
+         @timeOfDay >= rs.starts_at AND @timeOfDay < rs.ends_at,
+         @timeOfDay >= rs.starts_at OR  @timeOfDay < rs.ends_at);
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+--------------+------------+------------+--------+------------------------------------------------------------------------------+----------------------------------------+---------+--------------------+------+----------+------------------------------------+
+| id | select_type  | table      | partitions | type   | possible_keys                                                                | key                                    | key_len | ref                | rows | filtered | Extra                              |
++----+--------------+------------+------------+--------+------------------------------------------------------------------------------+----------------------------------------+---------+--------------------+------+----------+------------------------------------+
+| 1  | PRIMARY      | sr         | NULL       | range  | uq_service_restrictions_external,idx_service_restrictions_city               | idx_service_restrictions_city          | 8       | NULL               | 1    | 55.56    | Using index condition; Using where |
+| 1  | PRIMARY      | rk         | NULL       | eq_ref | PRIMARY                                                                      | PRIMARY                                | 1       | veze_db.sr.kind_id | 1    | 100      | NULL                               |
+| 2  | UNION        | rs         | NULL       | range  | idx_service_restriction_schedules_city,fk_service_restriction_schedules_kind | idx_service_restriction_schedules_city | 7       | NULL               | 1    | 55.56    | Using index condition; Using where |
+| 2  | UNION        | rk         | NULL       | eq_ref | PRIMARY                                                                      | PRIMARY                                | 1       | veze_db.rs.kind_id | 1    | 100      | NULL                               |
+| 3  | UNION RESULT | <union1,2> | NULL       | ALL    | NULL                                                                         | NULL                                   | NULL    | NULL               | NULL | NULL     | Using temporary                    |
++----+--------------+------------+------------+--------+------------------------------------------------------------------------------+----------------------------------------+---------+--------------------+------+----------+------------------------------------+
+*/
+
 -- Примітка: вікно 00:00–05:00 не перетинає північ; для вікна через північ (23:00–05:00) частина
 -- після півночі належить наступній даті — valid_from/valid_to на межі режимів перевіряє сервер.
 
@@ -1114,6 +1695,22 @@ LIMIT 3;
         -> Single-row index lookup on b using PRIMARY (id = p.building_id)  (cost=0.257 rows=1)
    сам запит повернув рядків: 3 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT p.id, COALESCE(p.name, b.name) AS name, p.shelter_hint,
+       ROUND(ST_Distance(p.location, @carPosition)) AS distance_m
+FROM pickup_points p
+LEFT JOIN buildings b ON b.id = p.building_id
+WHERE p.is_active AND p.shelter_hint IS NOT NULL
+ORDER BY distance_m
+LIMIT 3;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+---------------+---------+---------+-----------------------+------+----------+-----------------------------+
+| id | select_type | table | partitions | type   | possible_keys | key     | key_len | ref                   | rows | filtered | Extra                       |
++----+-------------+-------+------------+--------+---------------+---------+---------+-----------------------+------+----------+-----------------------------+
+| 1  | SIMPLE      | p     | NULL       | ALL    | NULL          | NULL    | NULL    | NULL                  | 18   | 81       | Using where; Using filesort |
+| 1  | SIMPLE      | b     | NULL       | eq_ref | PRIMARY       | PRIMARY | 8       | veze_db.p.building_id | 1    | 100      | NULL                        |
++----+-------------+-------+------------+--------+---------------+---------+---------+-----------------------+------+----------+-----------------------------+
+*/
+
 -- 3. Історія тривог у місті за добу з тривалістю
 SELECT c.name AS city, sr.starts_at, sr.ends_at,
        TIMESTAMPDIFF(MINUTE, sr.starts_at, COALESCE(sr.ends_at, UTC_TIMESTAMP())) AS minutes
@@ -1137,6 +1734,23 @@ ORDER BY sr.starts_at;
             -> Index lookup on sr using uq_service_restrictions_external (kind_id = '1')  (cost=0.6 rows=3)
     -> Single-row index lookup on c using PRIMARY (id = sr.city_id)  (cost=0.35 rows=1)
    сам запит повернув рядків: 3 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT c.name AS city, sr.starts_at, sr.ends_at,
+       TIMESTAMPDIFF(MINUTE, sr.starts_at, COALESCE(sr.ends_at, UTC_TIMESTAMP())) AS minutes
+FROM service_restrictions sr
+JOIN restriction_kinds rk ON rk.id = sr.kind_id AND rk.code = 'air_alert'
+JOIN cities c ON c.id = sr.city_id
+WHERE sr.starts_at >= '2026-10-02 00:00:00'
+ORDER BY sr.starts_at;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+----------------------------------------------------------------+----------------------------------+---------+--------------------+------+----------+-----------------------------+
+| id | select_type | table | partitions | type   | possible_keys                                                  | key                              | key_len | ref                | rows | filtered | Extra                       |
++----+-------------+-------+------------+--------+----------------------------------------------------------------+----------------------------------+---------+--------------------+------+----------+-----------------------------+
+| 1  | SIMPLE      | rk    | NULL       | const  | PRIMARY,code                                                   | code                             | 82      | const              | 1    | 100      | Using index; Using filesort |
+| 1  | SIMPLE      | sr    | NULL       | ref    | uq_service_restrictions_external,idx_service_restrictions_city | uq_service_restrictions_external | 1       | const              | 3    | 33.33    | Using where                 |
+| 1  | SIMPLE      | c     | NULL       | eq_ref | PRIMARY                                                        | PRIMARY                          | 4       | veze_db.sr.city_id | 1    | 100      | NULL                        |
++----+-------------+-------+------------+--------+----------------------------------------------------------------+----------------------------------+---------+--------------------+------+----------+-----------------------------+
+*/
 
 -- 4. Що робити вільним авто міста при діючому разовому обмеженні (тривога, НС):
 --    в депо, лишатися на місці чи працювати як звичайно. Для комендантської години момент
@@ -1182,6 +1796,31 @@ WHERE v.decommissioned_at IS NULL;
                         -> Single-row index lookup on rn using PRIMARY (id = d.road_node_id)  (cost=0.4 rows=1)
     -> Single-row index lookup on rk using PRIMARY (id = sr.kind_id)  (cost=0.385 rows=1)
    сам запит повернув рядків: 6 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT v.plate_number, rk.code AS restriction,
+       CASE WHEN rk.idle_to_depot THEN 'в депо'
+            WHEN rk.idle_stays_parked THEN 'стояти на місці'
+            ELSE 'працювати' END AS action
+FROM vehicles v
+JOIN vehicle_statuses vs ON vs.id = v.status_id AND vs.code = 'idle'
+JOIN depots d            ON d.id = v.home_depot_id
+JOIN road_nodes rn       ON rn.id = d.road_node_id AND rn.city_id = @cityId
+JOIN service_restrictions sr ON sr.city_id = @cityId AND sr.starts_at <= @atUtc
+                            AND (sr.ends_at IS NULL OR sr.ends_at > @atUtc)
+JOIN restriction_kinds rk ON rk.id = sr.kind_id
+WHERE v.decommissioned_at IS NULL;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+----------------------------------------------------------------+-------------------------------+---------+-------------------------+------+----------+-------------------------------------------------------------------+
+| id | select_type | table | partitions | type   | possible_keys                                                  | key                           | key_len | ref                     | rows | filtered | Extra                                                             |
++----+-------------+-------+------------+--------+----------------------------------------------------------------+-------------------------------+---------+-------------------------+------+----------+-------------------------------------------------------------------+
+| 1  | SIMPLE      | vs    | NULL       | const  | PRIMARY,code                                                   | code                          | 82      | const                   | 1    | 100      | Using index                                                       |
+| 1  | SIMPLE      | v     | NULL       | ref    | idx_vehicles_status_class,idx_vehicles_depot                   | idx_vehicles_status_class     | 1       | const                   | 6    | 11.11    | Using where                                                       |
+| 1  | SIMPLE      | d     | NULL       | eq_ref | PRIMARY,fk_depots_road_node                                    | PRIMARY                       | 4       | veze_db.v.home_depot_id | 1    | 100      | NULL                                                              |
+| 1  | SIMPLE      | rn    | NULL       | eq_ref | PRIMARY,fk_road_nodes_city                                     | PRIMARY                       | 8       | veze_db.d.road_node_id  | 1    | 100      | Using where                                                       |
+| 1  | SIMPLE      | sr    | NULL       | range  | uq_service_restrictions_external,idx_service_restrictions_city | idx_service_restrictions_city | 8       | NULL                    | 2    | 55.56    | Using index condition; Using where; Using join buffer (hash join) |
+| 1  | SIMPLE      | rk    | NULL       | eq_ref | PRIMARY                                                        | PRIMARY                       | 1       | veze_db.sr.kind_id      | 1    | 100      | NULL                                                              |
++----+-------------+-------+------------+--------+----------------------------------------------------------------+-------------------------------+---------+-------------------------+------+----------+-------------------------------------------------------------------+
+*/
 
 
 -- #####################################################################
@@ -1251,6 +1890,40 @@ ORDER BY r.created_at DESC;
                 -> Index lookup on done using idx_ride_events_ride (ride_id = r.id)  (cost=0.788 rows=5.25)
    сам запит повернув рядків: 2 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT r.id, c.name AS city, vc.name AS class, rs.name AS status,
+       CONCAT(COALESCE(pf.name, bf.name, CONCAT('точка ', pf.id)), ' → ',
+              COALESCE(pt.name, bt.name, CONCAT('точка ', pt.id))) AS route,
+       r.created_at, done.created_at AS finished_at, r.final_price
+FROM rides r
+JOIN tariffs t          ON t.id = r.tariff_id
+JOIN cities c           ON c.id = t.city_id
+JOIN vehicle_classes vc ON vc.id = t.class_id
+JOIN ride_statuses rs   ON rs.id = r.status_id
+JOIN pickup_points pf   ON pf.id = r.pickup_point_id
+LEFT JOIN buildings bf  ON bf.id = pf.building_id
+JOIN pickup_points pt   ON pt.id = r.dropoff_point_id
+LEFT JOIN buildings bt  ON bt.id = pt.building_id
+LEFT JOIN ride_events done ON done.ride_id = r.id AND done.event_type_id = 1
+                          AND done.status_id IN (6, 7)
+WHERE r.passenger_id = 1
+ORDER BY r.created_at DESC;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+---------------------------------------------------------------------------------------+------------------------+---------+----------------------------+------+----------+--------------------------------------------+
+| id | select_type | table | partitions | type   | possible_keys                                                                         | key                    | key_len | ref                        | rows | filtered | Extra                                      |
++----+-------------+-------+------------+--------+---------------------------------------------------------------------------------------+------------------------+---------+----------------------------+------+----------+--------------------------------------------+
+| 1  | SIMPLE      | r     | NULL       | ref    | idx_rides_passenger,idx_rides_status,fk_rides_tariff,fk_rides_pickup,fk_rides_dropoff | idx_rides_passenger    | 8       | const                      | 2    | 100      | Using temporary; Using filesort            |
+| 1  | SIMPLE      | c     | NULL       | index  | PRIMARY                                                                               | uq_cities_country_name | 404     | NULL                       | 2    | 100      | Using index; Using join buffer (hash join) |
+| 1  | SIMPLE      | rs    | NULL       | eq_ref | PRIMARY                                                                               | PRIMARY                | 1       | veze_db.r.status_id        | 1    | 100      | NULL                                       |
+| 1  | SIMPLE      | t     | NULL       | eq_ref | PRIMARY,uq_tariffs_version,fk_tariffs_class                                           | PRIMARY                | 4       | veze_db.r.tariff_id        | 1    | 50       | Using where                                |
+| 1  | SIMPLE      | vc    | NULL       | eq_ref | PRIMARY                                                                               | PRIMARY                | 1       | veze_db.t.class_id         | 1    | 100      | NULL                                       |
+| 1  | SIMPLE      | pf    | NULL       | eq_ref | PRIMARY                                                                               | PRIMARY                | 8       | veze_db.r.pickup_point_id  | 1    | 100      | NULL                                       |
+| 1  | SIMPLE      | bf    | NULL       | eq_ref | PRIMARY                                                                               | PRIMARY                | 8       | veze_db.pf.building_id     | 1    | 100      | NULL                                       |
+| 1  | SIMPLE      | pt    | NULL       | eq_ref | PRIMARY                                                                               | PRIMARY                | 8       | veze_db.r.dropoff_point_id | 1    | 100      | NULL                                       |
+| 1  | SIMPLE      | bt    | NULL       | eq_ref | PRIMARY                                                                               | PRIMARY                | 8       | veze_db.pt.building_id     | 1    | 100      | NULL                                       |
+| 1  | SIMPLE      | done  | NULL       | ref    | idx_ride_events_ride,fk_ride_events_type,fk_ride_events_status                        | idx_ride_events_ride   | 8       | veze_db.r.id               | 5    | 100      | Using where                                |
++----+-------------+-------+------------+--------+---------------------------------------------------------------------------------------+------------------------+---------+----------------------------+------+----------+--------------------------------------------+
+*/
+
 -- 2. Хронологія поїздки: хто й коли що зробив
 SELECT e.created_at, et.name AS event, rs.name AS new_status, ak.name AS actor,
        e.pickup_point_id AS new_dropoff, e.note
@@ -1279,6 +1952,25 @@ ORDER BY e.created_at;
     -> Single-row index lookup on rs using PRIMARY (id = e.status_id)  (cost=0.264 rows=1)
    сам запит повернув рядків: 7 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT e.created_at, et.name AS event, rs.name AS new_status, ak.name AS actor,
+       e.pickup_point_id AS new_dropoff, e.note
+FROM ride_events e
+JOIN ride_event_types et ON et.id = e.event_type_id
+JOIN ride_actor_kinds ak ON ak.id = e.actor_kind_id
+LEFT JOIN ride_statuses rs ON rs.id = e.status_id
+WHERE e.ride_id = 1
+ORDER BY e.created_at;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+---------------------------------------------------------------+----------------------+---------+-------------------------+------+----------+-------+
+| id | select_type | table | partitions | type   | possible_keys                                                 | key                  | key_len | ref                     | rows | filtered | Extra |
++----+-------------+-------+------------+--------+---------------------------------------------------------------+----------------------+---------+-------------------------+------+----------+-------+
+| 1  | SIMPLE      | e     | NULL       | ref    | idx_ride_events_ride,fk_ride_events_type,fk_ride_events_actor | idx_ride_events_ride | 8       | const                   | 7    | 100      | NULL  |
+| 1  | SIMPLE      | ak    | NULL       | eq_ref | PRIMARY                                                       | PRIMARY              | 1       | veze_db.e.actor_kind_id | 1    | 100      | NULL  |
+| 1  | SIMPLE      | et    | NULL       | eq_ref | PRIMARY                                                       | PRIMARY              | 1       | veze_db.e.event_type_id | 1    | 100      | NULL  |
+| 1  | SIMPLE      | rs    | NULL       | eq_ref | PRIMARY                                                       | PRIMARY              | 1       | veze_db.e.status_id     | 1    | 100      | NULL  |
++----+-------------+-------+------------+--------+---------------------------------------------------------------+----------------------+---------+-------------------------+------+----------+-------+
+*/
+
 -- 3. Чек пасажира: розшифровка ціни й коефіцієнти
 SELECT pit.name AS item, lf.name AS fee, rpi.amount
 FROM ride_price_items rpi
@@ -1304,6 +1996,22 @@ ORDER BY pit.id;
             -> Single-row index lookup on pit using PRIMARY (id = rpi.item_type_id)  (cost=0.275 rows=1)
    сам запит повернув рядків: 4 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT pit.name AS item, lf.name AS fee, rpi.amount
+FROM ride_price_items rpi
+JOIN price_item_types pit ON pit.id = rpi.item_type_id
+LEFT JOIN location_fees lf ON lf.id = rpi.location_fee_id
+WHERE rpi.ride_id = 1
+ORDER BY pit.id;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+----------------------------------------------------+---------------------------+---------+--------------------------+------+----------+--------------------------------------------+
+| id | select_type | table | partitions | type   | possible_keys                                      | key                       | key_len | ref                      | rows | filtered | Extra                                      |
++----+-------------+-------+------------+--------+----------------------------------------------------+---------------------------+---------+--------------------------+------+----------+--------------------------------------------+
+| 1  | SIMPLE      | rpi   | NULL       | ref    | idx_ride_price_items_ride,fk_ride_price_items_type | idx_ride_price_items_ride | 8       | const                    | 4    | 100      | Using temporary; Using filesort            |
+| 1  | SIMPLE      | lf    | NULL       | ALL    | PRIMARY                                            | NULL                      | NULL    | NULL                     | 1    | 100      | Using where; Using join buffer (hash join) |
+| 1  | SIMPLE      | pit   | NULL       | eq_ref | PRIMARY                                            | PRIMARY                   | 1       | veze_db.rpi.item_type_id | 1    | 100      | NULL                                       |
++----+-------------+-------+------------+--------+----------------------------------------------------+---------------------------+---------+--------------------------+------+----------+--------------------------------------------+
+*/
+
 SELECT sk.name AS reason, rsf.multiplier
 FROM ride_surge_factors rsf
 JOIN surge_kinds sk ON sk.id = rsf.surge_kind_id
@@ -1318,6 +2026,19 @@ WHERE rsf.ride_id = 1;
     -> Index lookup on rsf using PRIMARY (ride_id = 1)  (cost=0.35 rows=1)
     -> Single-row index lookup on sk using PRIMARY (id = rsf.surge_kind_id)  (cost=0.35 rows=1)
    сам запит повернув рядків: 1 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT sk.name AS reason, rsf.multiplier
+FROM ride_surge_factors rsf
+JOIN surge_kinds sk ON sk.id = rsf.surge_kind_id
+WHERE rsf.ride_id = 1;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+------------------------------------+---------+---------+---------------------------+------+----------+-------+
+| id | select_type | table | partitions | type   | possible_keys                      | key     | key_len | ref                       | rows | filtered | Extra |
++----+-------------+-------+------------+--------+------------------------------------+---------+---------+---------------------------+------+----------+-------+
+| 1  | SIMPLE      | rsf   | NULL       | ref    | PRIMARY,fk_ride_surge_factors_kind | PRIMARY | 8       | const                     | 1    | 100      | NULL  |
+| 1  | SIMPLE      | sk    | NULL       | eq_ref | PRIMARY                            | PRIMARY | 1       | veze_db.rsf.surge_kind_id | 1    | 100      | NULL  |
++----+-------------+-------+------------+--------+------------------------------------+---------+---------+---------------------------+------+----------+-------+
+*/
 
 -- 4. Звірка: final_price = сума рядків (має бути порожньо)
 SELECT r.id, r.final_price, COALESCE(SUM(rpi.amount), 0) AS items_sum
@@ -1342,6 +2063,21 @@ HAVING r.final_price <> items_sum;
                     -> Table scan on r  (cost=0.65 rows=4)
                 -> Index lookup on rpi using idx_ride_price_items_ride (ride_id = r.id)  (cost=0.578 rows=2.33)
    сам запит повернув рядків: 0 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT r.id, r.final_price, COALESCE(SUM(rpi.amount), 0) AS items_sum
+FROM rides r
+LEFT JOIN ride_price_items rpi ON rpi.ride_id = r.id
+WHERE r.final_price IS NOT NULL
+GROUP BY r.id, r.final_price
+HAVING r.final_price <> items_sum;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+------+---------------------------+---------------------------+---------+--------------+------+----------+------------------------------+
+| id | select_type | table | partitions | type | possible_keys             | key                       | key_len | ref          | rows | filtered | Extra                        |
++----+-------------+-------+------------+------+---------------------------+---------------------------+---------+--------------+------+----------+------------------------------+
+| 1  | SIMPLE      | r     | NULL       | ALL  | NULL                      | NULL                      | NULL    | NULL         | 4    | 75       | Using where; Using temporary |
+| 1  | SIMPLE      | rpi   | NULL       | ref  | idx_ride_price_items_ride | idx_ride_price_items_ride | 8       | veze_db.r.id | 2    | 100      | NULL                         |
++----+-------------+-------+------------+------+---------------------------+---------------------------+---------+--------------+------+----------+------------------------------+
+*/
 
 -- 5. Активні поїздки для карти оператора: авто, пасажир, остання точка треку
 SELECT r.id, rs.name AS status, v.plate_number, p.first_name AS passenger,
@@ -1382,6 +2118,29 @@ WHERE r.status_id NOT IN (6, 7);
                 -> Covering index lookup on ride_track_points using idx_ride_track_points_ride (ride_id = r.id)  (cost=0.652 rows=4)
    сам запит повернув рядків: 1 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT r.id, rs.name AS status, v.plate_number, p.first_name AS passenger,
+       ROUND(ST_Latitude(tp.location), 6) AS lat, ROUND(ST_Longitude(tp.location), 6) AS lng,
+       tp.speed_kmh
+FROM rides r
+JOIN ride_statuses rs ON rs.id = r.status_id
+JOIN passengers p     ON p.id = r.passenger_id
+LEFT JOIN vehicles v  ON v.id = r.vehicle_id
+LEFT JOIN ride_track_points tp ON tp.id = (SELECT MAX(id) FROM ride_track_points
+                                           WHERE ride_id = r.id)
+WHERE r.status_id NOT IN (6, 7);
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+--------------------+-------------------+------------+--------+--------------------------------------+----------------------------+---------+----------------------+------+----------+-------------+
+| id | select_type        | table             | partitions | type   | possible_keys                        | key                        | key_len | ref                  | rows | filtered | Extra       |
++----+--------------------+-------------------+------------+--------+--------------------------------------+----------------------------+---------+----------------------+------+----------+-------------+
+| 1  | PRIMARY            | p                 | NULL       | ALL    | PRIMARY                              | NULL                       | NULL    | NULL                 | 3    | 100      | NULL        |
+| 1  | PRIMARY            | r                 | NULL       | ref    | idx_rides_passenger,idx_rides_status | idx_rides_passenger        | 8       | veze_db.p.id         | 1    | 75       | Using where |
+| 1  | PRIMARY            | rs                | NULL       | eq_ref | PRIMARY                              | PRIMARY                    | 1       | veze_db.r.status_id  | 1    | 100      | NULL        |
+| 1  | PRIMARY            | v                 | NULL       | eq_ref | PRIMARY                              | PRIMARY                    | 4       | veze_db.r.vehicle_id | 1    | 100      | NULL        |
+| 1  | PRIMARY            | tp                | NULL       | eq_ref | PRIMARY                              | PRIMARY                    | 8       | func                 | 1    | 100      | Using where |
+| 2  | DEPENDENT SUBQUERY | ride_track_points | NULL       | ref    | idx_ride_track_points_ride           | idx_ride_track_points_ride | 8       | veze_db.r.id         | 4    | 100      | Using index |
++----+--------------------+-------------------+------------+--------+--------------------------------------+----------------------------+---------+----------------------+------+----------+-------------+
+*/
+
 -- 6. Скільки разів використано промокод (скасовані без призначення не рахуються)
 SELECT pc.code, pc.max_uses, COUNT(r.id) AS used
 FROM promo_codes pc
@@ -1401,6 +2160,19 @@ GROUP BY pc.id, pc.code, pc.max_uses;
                 -> Filter: ((r.status_id <> 7) or (r.vehicle_id is not null))  (cost=0.325 rows=4)
                     -> Table scan on r  (cost=0.325 rows=4)
    сам запит повернув рядків: 2 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT pc.code, pc.max_uses, COUNT(r.id) AS used
+FROM promo_codes pc
+LEFT JOIN rides r ON r.promo_code_id = pc.id AND NOT (r.status_id = 7 AND r.vehicle_id IS NULL)
+GROUP BY pc.id, pc.code, pc.max_uses;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+------+---------------------------------------------------+------+---------+------+------+----------+--------------------------------------------+
+| id | select_type | table | partitions | type | possible_keys                                     | key  | key_len | ref  | rows | filtered | Extra                                      |
++----+-------------+-------+------------+------+---------------------------------------------------+------+---------+------+------+----------+--------------------------------------------+
+| 1  | SIMPLE      | pc    | NULL       | ALL  | NULL                                              | NULL | NULL    | NULL | 2    | 100      | Using temporary                            |
+| 1  | SIMPLE      | r     | NULL       | ALL  | idx_rides_vehicle,idx_rides_status,fk_rides_promo | NULL | NULL    | NULL | 4    | 100      | Using where; Using join buffer (hash join) |
++----+-------------+-------+------------+------+---------------------------------------------------+------+---------+------+------+----------+--------------------------------------------+
+*/
 
 -- 7. Доставки: відправник, отримувач, посилка
 SELECT r.id, p.first_name AS sender, d.recipient_name, d.recipient_phone,
@@ -1425,6 +2197,23 @@ JOIN ride_statuses rs ON rs.id = r.status_id;
         -> Single-row index lookup on p using PRIMARY (id = r.passenger_id)  (cost=0.35 rows=1)
     -> Single-row index lookup on rs using PRIMARY (id = r.status_id)  (cost=0.35 rows=1)
    сам запит повернув рядків: 1 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT r.id, p.first_name AS sender, d.recipient_name, d.recipient_phone,
+       d.package_description, d.package_weight_kg, rs.name AS status
+FROM ride_deliveries d
+JOIN rides r          ON r.id = d.ride_id
+JOIN passengers p     ON p.id = r.passenger_id
+JOIN ride_statuses rs ON rs.id = r.status_id;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+----------------------------------------------+---------+---------+------------------------+------+----------+-------+
+| id | select_type | table | partitions | type   | possible_keys                                | key     | key_len | ref                    | rows | filtered | Extra |
++----+-------------+-------+------------+--------+----------------------------------------------+---------+---------+------------------------+------+----------+-------+
+| 1  | SIMPLE      | d     | NULL       | ALL    | PRIMARY                                      | NULL    | NULL    | NULL                   | 1    | 100      | NULL  |
+| 1  | SIMPLE      | r     | NULL       | eq_ref | PRIMARY,idx_rides_passenger,idx_rides_status | PRIMARY | 8       | veze_db.d.ride_id      | 1    | 100      | NULL  |
+| 1  | SIMPLE      | p     | NULL       | eq_ref | PRIMARY                                      | PRIMARY | 8       | veze_db.r.passenger_id | 1    | 100      | NULL  |
+| 1  | SIMPLE      | rs    | NULL       | eq_ref | PRIMARY                                      | PRIMARY | 1       | veze_db.r.status_id    | 1    | 100      | NULL  |
++----+-------------+-------+------------+--------+----------------------------------------------+---------+---------+------------------------+------+----------+-------+
+*/
 
 
 -- #####################################################################
@@ -1468,6 +2257,28 @@ WHERE place = 1;
                                 -> Single-row index lookup on c using PRIMARY (id = s.city_id)  (cost=0.257 rows=1)
                             -> Single-row index lookup on st using PRIMARY (id = s.type_id)  (cost=0.257 rows=1)
    сам запит повернув рядків: 2 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT city, street, buildings_count
+FROM (SELECT c.name AS city, CONCAT(st.name, ' ', s.name) AS street,
+             COUNT(*) AS buildings_count,
+             RANK() OVER (ORDER BY COUNT(*) DESC) AS place
+      FROM buildings b
+      JOIN streets s       ON s.id = b.street_id
+      JOIN street_types st ON st.id = s.type_id
+      JOIN cities c        ON c.id = s.city_id
+      GROUP BY s.id, c.name, st.name, s.name) ranked
+WHERE place = 1;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+------------+------------+--------+-------------------------------------------------------------------------+----------------------------+---------+---------------------+------+----------+----------------------------------------------+
+| id | select_type | table      | partitions | type   | possible_keys                                                           | key                        | key_len | ref                 | rows | filtered | Extra                                        |
++----+-------------+------------+------------+--------+-------------------------------------------------------------------------+----------------------------+---------+---------------------+------+----------+----------------------------------------------+
+| 1  | PRIMARY     | <derived2> | NULL       | ref    | <auto_key0>                                                             | <auto_key0>                | 8       | const               | 1    | 100      | NULL                                         |
+| 2  | DERIVED     | b          | NULL       | index  | uq_buildings_street_number                                              | uq_buildings_street_number | 86      | NULL                | 15   | 100      | Using index; Using temporary; Using filesort |
+| 2  | DERIVED     | s          | NULL       | eq_ref | PRIMARY,uq_streets_city_type_name,idx_streets_city_name,fk_streets_type | PRIMARY                    | 4       | veze_db.b.street_id | 1    | 100      | NULL                                         |
+| 2  | DERIVED     | c          | NULL       | eq_ref | PRIMARY                                                                 | PRIMARY                    | 4       | veze_db.s.city_id   | 1    | 100      | NULL                                         |
+| 2  | DERIVED     | st         | NULL       | eq_ref | PRIMARY                                                                 | PRIMARY                    | 1       | veze_db.s.type_id   | 1    | 100      | NULL                                         |
++----+-------------+------------+------------+--------+-------------------------------------------------------------------------+----------------------------+---------+---------------------+------+----------+----------------------------------------------+
+*/
 
 -- 2. Вулиця, на якій найбільше точок посадки-висадки.
 --    Вулиця точки — через будинок (pickup_points.building_id → buildings.street_id);
@@ -1515,6 +2326,30 @@ WHERE place = 1;
                             -> Single-row index lookup on st using PRIMARY (id = s.type_id)  (cost=0.256 rows=1)
    сам запит повернув рядків: 1 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT city, street, pickup_points_count
+FROM (SELECT c.name AS city, CONCAT(st.name, ' ', s.name) AS street,
+             COUNT(*) AS pickup_points_count,
+             RANK() OVER (ORDER BY COUNT(*) DESC) AS place
+      FROM pickup_points p
+      JOIN buildings b     ON b.id = p.building_id
+      JOIN streets s       ON s.id = b.street_id
+      JOIN street_types st ON st.id = s.type_id
+      JOIN cities c        ON c.id = s.city_id
+      GROUP BY s.id, c.name, st.name, s.name) ranked
+WHERE place = 1;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+------------+------------+--------+-------------------------------------------------------------------------+----------------------------+---------+-----------------------+------+----------+-----------------------------------------------------------+
+| id | select_type | table      | partitions | type   | possible_keys                                                           | key                        | key_len | ref                   | rows | filtered | Extra                                                     |
++----+-------------+------------+------------+--------+-------------------------------------------------------------------------+----------------------------+---------+-----------------------+------+----------+-----------------------------------------------------------+
+| 1  | PRIMARY     | <derived2> | NULL       | ref    | <auto_key0>                                                             | <auto_key0>                | 8       | const                 | 1    | 100      | NULL                                                      |
+| 2  | DERIVED     | p          | NULL       | index  | idx_pickup_points_building                                              | idx_pickup_points_building | 9       | NULL                  | 18   | 100      | Using where; Using index; Using temporary; Using filesort |
+| 2  | DERIVED     | b          | NULL       | eq_ref | PRIMARY,uq_buildings_street_number                                      | PRIMARY                    | 8       | veze_db.p.building_id | 1    | 100      | NULL                                                      |
+| 2  | DERIVED     | s          | NULL       | eq_ref | PRIMARY,uq_streets_city_type_name,idx_streets_city_name,fk_streets_type | PRIMARY                    | 4       | veze_db.b.street_id   | 1    | 100      | NULL                                                      |
+| 2  | DERIVED     | c          | NULL       | eq_ref | PRIMARY                                                                 | PRIMARY                    | 4       | veze_db.s.city_id     | 1    | 100      | NULL                                                      |
+| 2  | DERIVED     | st         | NULL       | eq_ref | PRIMARY                                                                 | PRIMARY                    | 1       | veze_db.s.type_id     | 1    | 100      | NULL                                                      |
++----+-------------+------------+------------+--------+-------------------------------------------------------------------------+----------------------------+---------+-----------------------+------+----------+-----------------------------------------------------------+
+*/
+
 -- 3. Усі мости з поточним станом.
 --    Міст — це вулиця типу 'bridge'; LEFT JOIN bridges, щоб не втратити міст без рядка в bridges
 --    (такий вважаємо відкритим). Причина перекриття — лише коли міст перекрито.
@@ -1544,6 +2379,25 @@ ORDER BY c.name, s.name;
                 -> Single-row index lookup on c using PRIMARY (id = s.city_id)  (cost=0.275 rows=1)
             -> Single-row index lookup on br using street_id (street_id = s.id)  (cost=0.275 rows=1)
    сам запит повернув рядків: 4 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT c.name AS city, CONCAT(st.name, ' ', s.name) AS bridge,
+       COALESCE(br.is_active, TRUE) AS is_open, br.closure_note
+FROM streets s
+JOIN street_types st  ON st.id = s.type_id
+JOIN cities c         ON c.id = s.city_id
+LEFT JOIN bridges br  ON br.street_id = s.id
+WHERE st.code = 'bridge'
+ORDER BY c.name, s.name;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+-----------------------------------------------------------------+-----------------+---------+-------------------+------+----------+---------------------------------+
+| id | select_type | table | partitions | type   | possible_keys                                                   | key             | key_len | ref               | rows | filtered | Extra                           |
++----+-------------+-------+------------+--------+-----------------------------------------------------------------+-----------------+---------+-------------------+------+----------+---------------------------------+
+| 1  | SIMPLE      | st    | NULL       | const  | PRIMARY,code                                                    | code            | 82      | const             | 1    | 100      | Using temporary; Using filesort |
+| 1  | SIMPLE      | s     | NULL       | ref    | uq_streets_city_type_name,idx_streets_city_name,fk_streets_type | fk_streets_type | 1       | const             | 4    | 100      | NULL                            |
+| 1  | SIMPLE      | c     | NULL       | eq_ref | PRIMARY                                                         | PRIMARY         | 4       | veze_db.s.city_id | 1    | 100      | NULL                            |
+| 1  | SIMPLE      | br    | NULL       | eq_ref | street_id                                                       | street_id       | 4       | veze_db.s.id      | 1    | 100      | NULL                            |
++----+-------------+-------+------------+--------+-----------------------------------------------------------------+-----------------+---------+-------------------+------+----------+---------------------------------+
+*/
 
 
 -- #####################################################################
@@ -1579,6 +2433,26 @@ LIMIT 3;
                 -> Index lookup on v using idx_vehicles_status_class (status_id = '1', class_id = '2')  (cost=0.261 rows=1)
         -> Single-row index lookup on vm using PRIMARY (id = v.model_id)  (cost=1.15 rows=1)
    сам запит повернув рядків: 1 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT v.id, v.plate_number, vm.name AS model, v.color, v.battery_level,
+       ROUND(ST_Distance(v.location, @pickup)) AS distance_m
+FROM vehicles v
+JOIN vehicle_statuses vs ON vs.id = v.status_id AND vs.code = 'idle'
+JOIN vehicle_classes vc  ON vc.id = v.class_id AND vc.code = 'comfort'
+JOIN vehicle_models vm   ON vm.id = v.model_id
+WHERE v.battery_level >= 20 AND v.decommissioned_at IS NULL
+ORDER BY distance_m
+LIMIT 3;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+---------------------------------------------------------------+---------------------------+---------+--------------------+------+----------+-----------------------------+
+| id | select_type | table | partitions | type   | possible_keys                                                 | key                       | key_len | ref                | rows | filtered | Extra                       |
++----+-------------+-------+------------+--------+---------------------------------------------------------------+---------------------------+---------+--------------------+------+----------+-----------------------------+
+| 1  | SIMPLE      | vs    | NULL       | const  | PRIMARY,code                                                  | code                      | 82      | const              | 1    | 100      | Using index; Using filesort |
+| 1  | SIMPLE      | vc    | NULL       | const  | PRIMARY,code                                                  | code                      | 82      | const              | 1    | 100      | Using index                 |
+| 1  | SIMPLE      | v     | NULL       | ref    | idx_vehicles_status_class,fk_vehicles_class,fk_vehicles_model | idx_vehicles_status_class | 2       | const,const        | 1    | 11.11    | Using where                 |
+| 1  | SIMPLE      | vm    | NULL       | eq_ref | PRIMARY                                                       | PRIMARY                   | 2       | veze_db.v.model_id | 1    | 100      | NULL                        |
++----+-------------+-------+------------+--------+---------------------------------------------------------------+---------------------------+---------+--------------------+------+----------+-----------------------------+
+*/
 
 -- 2. Карта парку для оператора: статус, заряд, місто
 SELECT v.plate_number, vc.code AS class, vs.name AS status, v.battery_level,
@@ -1620,6 +2494,29 @@ ORDER BY vs.id, v.plate_number;
             -> Single-row index lookup on c using PRIMARY (id = rn.city_id)  (cost=0.35 rows=1)
    сам запит повернув рядків: 9 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT v.plate_number, vc.code AS class, vs.name AS status, v.battery_level,
+       c.name AS city, v.location_updated_at
+FROM vehicles v
+JOIN vehicle_classes vc  ON vc.id = v.class_id
+JOIN vehicle_statuses vs ON vs.id = v.status_id
+JOIN depots d            ON d.id = v.home_depot_id
+JOIN road_nodes rn       ON rn.id = d.road_node_id
+JOIN cities c            ON c.id = rn.city_id
+WHERE v.decommissioned_at IS NULL
+ORDER BY vs.id, v.plate_number;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+----------------------------------------------------------------+---------------------+---------+------------------------+------+----------+----------------------------------------------+
+| id | select_type | table | partitions | type   | possible_keys                                                  | key                 | key_len | ref                    | rows | filtered | Extra                                        |
++----+-------------+-------+------------+--------+----------------------------------------------------------------+---------------------+---------+------------------------+------+----------+----------------------------------------------+
+| 1  | SIMPLE      | d     | NULL       | index  | PRIMARY,fk_depots_road_node                                    | fk_depots_road_node | 8       | NULL                   | 1    | 100      | Using index; Using temporary; Using filesort |
+| 1  | SIMPLE      | v     | NULL       | ALL    | idx_vehicles_status_class,idx_vehicles_depot,fk_vehicles_class | NULL                | NULL    | NULL                   | 9    | 11.11    | Using where; Using join buffer (hash join)   |
+| 1  | SIMPLE      | vc    | NULL       | eq_ref | PRIMARY                                                        | PRIMARY             | 1       | veze_db.v.class_id     | 1    | 100      | NULL                                         |
+| 1  | SIMPLE      | vs    | NULL       | eq_ref | PRIMARY                                                        | PRIMARY             | 1       | veze_db.v.status_id    | 1    | 100      | NULL                                         |
+| 1  | SIMPLE      | rn    | NULL       | eq_ref | PRIMARY,fk_road_nodes_city                                     | PRIMARY             | 8       | veze_db.d.road_node_id | 1    | 100      | NULL                                         |
+| 1  | SIMPLE      | c     | NULL       | eq_ref | PRIMARY                                                        | PRIMARY             | 4       | veze_db.rn.city_id     | 1    | 100      | NULL                                         |
++----+-------------+-------+------------+--------+----------------------------------------------------------------+---------------------+---------+------------------------+------+----------+----------------------------------------------+
+*/
+
 -- 3. Діючий тариф у межах Києва для кожного класу (остання версія з valid_from <= зараз)
 SELECT vc.code AS class, t.base_fare, t.price_per_km, t.price_per_min, t.min_fare, t.valid_from
 FROM tariffs t
@@ -1646,6 +2543,23 @@ WHERE t.city_id = 1 AND t.destination_city_id IS NULL
                     -> Covering index lookup on t2 using uq_tariffs_version (city_id = t.city_id, destination_key = t.destination_key, class_id = t.class_id)  (cost=0.287 rows=1.1)
     -> Single-row index lookup on vc using PRIMARY (id = t.class_id)  (cost=0.265 rows=1)
    сам запит повернув рядків: 6 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT vc.code AS class, t.base_fare, t.price_per_km, t.price_per_min, t.min_fare, t.valid_from
+FROM tariffs t
+JOIN vehicle_classes vc ON vc.id = t.class_id
+WHERE t.city_id = 1 AND t.destination_city_id IS NULL
+  AND t.valid_from = (SELECT MAX(t2.valid_from) FROM tariffs t2
+                      WHERE t2.city_id = t.city_id AND t2.destination_key = t.destination_key
+                        AND t2.class_id = t.class_id AND t2.valid_from <= UTC_TIMESTAMP());
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+--------------------+-------+------------+--------+------------------------------------------------------------+--------------------+---------+----------------------------------------------------------------+------+----------+--------------------------+
+| id | select_type        | table | partitions | type   | possible_keys                                              | key                | key_len | ref                                                            | rows | filtered | Extra                    |
++----+--------------------+-------+------------+--------+------------------------------------------------------------+--------------------+---------+----------------------------------------------------------------+------+----------+--------------------------+
+| 1  | PRIMARY            | t     | NULL       | ref    | uq_tariffs_version,fk_tariffs_destination,fk_tariffs_class | uq_tariffs_version | 4       | const                                                          | 8    | 81.82    | Using where              |
+| 1  | PRIMARY            | vc    | NULL       | eq_ref | PRIMARY                                                    | PRIMARY            | 1       | veze_db.t.class_id                                             | 1    | 100      | NULL                     |
+| 2  | DEPENDENT SUBQUERY | t2    | NULL       | ref    | uq_tariffs_version,fk_tariffs_class                        | uq_tariffs_version | 10      | veze_db.t.city_id,veze_db.t.destination_key,veze_db.t.class_id | 1    | 33.33    | Using where; Using index |
++----+--------------------+-------+------------+--------+------------------------------------------------------------+--------------------+---------+----------------------------------------------------------------+------+----------+--------------------------+
+*/
 
 -- 4. Коефіцієнти за розкладом: момент UTC → місцевий час міста (cities.timezone) → вікна.
 --    Таблиці часових поясів в образі mysql завантажені, CONVERT_TZ з 'Europe/Kyiv' працює.
@@ -1675,6 +2589,22 @@ WHERE ss.city_id = 1 AND ss.is_active AND (ss.weekdays & @dayBit)
     -> Single-row index lookup on sk using PRIMARY (id = ss.kind_id)  (cost=0.275 rows=1)
    сам запит повернув рядків: 1 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT sk.code, sk.name, ss.multiplier
+FROM surge_schedules ss
+JOIN surge_kinds sk ON sk.id = ss.kind_id
+WHERE ss.city_id = 1 AND ss.is_active AND (ss.weekdays & @dayBit)
+  AND IF(ss.starts_at < ss.ends_at,
+         @timeOfDay >= ss.starts_at AND @timeOfDay < ss.ends_at,
+         @timeOfDay >= ss.starts_at OR  @timeOfDay < ss.ends_at);  -- вікно через північ
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+--------------------------------------------------+--------------------------+---------+--------------------+------+----------+------------------------------------+
+| id | select_type | table | partitions | type   | possible_keys                                    | key                      | key_len | ref                | rows | filtered | Extra                              |
++----+-------------+-------+------------+--------+--------------------------------------------------+--------------------------+---------+--------------------+------+----------+------------------------------------+
+| 1  | SIMPLE      | ss    | NULL       | range  | idx_surge_schedules_city,fk_surge_schedules_kind | idx_surge_schedules_city | 5       | NULL               | 4    | 100      | Using index condition; Using where |
+| 1  | SIMPLE      | sk    | NULL       | eq_ref | PRIMARY                                          | PRIMARY                  | 1       | veze_db.ss.kind_id | 1    | 100      | NULL                               |
++----+-------------+-------+------------+--------+--------------------------------------------------+--------------------------+---------+--------------------+------+----------+------------------------------------+
+*/
+
 -- Примітка: для нічного вікна після півночі день тижня — уже наступний; маска 127 це покриває.
 
 -- 5. Коефіцієнти за умовами, що діяли в момент (UTC), для точки в зоні «Центр»
@@ -1703,6 +2633,22 @@ WHERE sc.city_id = 1 AND sc.starts_at <= @atUtc AND (sc.ends_at IS NULL OR sc.en
     -> Single-row index lookup on sk using PRIMARY (id = sc.kind_id)  (cost=0.317 rows=1)
    сам запит повернув рядків: 1 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT sk.code, sc.multiplier, sc.note
+FROM surge_conditions sc
+JOIN surge_kinds sk ON sk.id = sc.kind_id
+LEFT JOIN service_zones sz ON sz.id = sc.service_zone_id
+WHERE sc.city_id = 1 AND sc.starts_at <= @atUtc AND (sc.ends_at IS NULL OR sc.ends_at > @atUtc)
+  AND (sc.service_zone_id IS NULL OR ST_Contains(sz.area, @point));
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+-----------------------------------------------------------------------------+---------------------------+---------+----------------------------+------+----------+------------------------------------+
+| id | select_type | table | partitions | type   | possible_keys                                                               | key                       | key_len | ref                        | rows | filtered | Extra                              |
++----+-------------+-------+------------+--------+-----------------------------------------------------------------------------+---------------------------+---------+----------------------------+------+----------+------------------------------------+
+| 1  | SIMPLE      | sc    | NULL       | range  | idx_surge_conditions_city,fk_surge_conditions_zone,fk_surge_conditions_kind | idx_surge_conditions_city | 8       | NULL                       | 2    | 75       | Using index condition; Using where |
+| 1  | SIMPLE      | sz    | NULL       | eq_ref | PRIMARY                                                                     | PRIMARY                   | 4       | veze_db.sc.service_zone_id | 1    | 100      | Using where                        |
+| 1  | SIMPLE      | sk    | NULL       | eq_ref | PRIMARY                                                                     | PRIMARY                   | 1       | veze_db.sc.kind_id         | 1    | 100      | NULL                               |
++----+-------------+-------+------------+--------+-----------------------------------------------------------------------------+---------------------------+---------+----------------------------+------+----------+------------------------------------+
+*/
+
 -- 6. Коефіцієнт попиту: 5 активних заявок на 2 вільні авто → співвідношення 2.5
 SET @ratio = 5 / 2;
 SELECT multiplier FROM surge_demand_levels
@@ -1718,6 +2664,18 @@ LIMIT 1;
 -> Limit: 1 row(s)  (cost=1.16 rows=1)
     -> Index range scan on surge_demand_levels using uq_surge_demand_levels over (city_id = 1 AND min_ratio <= 2.50) (reverse), with index condition: ((surge_demand_levels.city_id = 1) and (surge_demand_levels.min_ratio <= <cache>((@ratio))))  (cost=1.16 rows=2)
    сам запит повернув рядків: 1 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT multiplier FROM surge_demand_levels
+WHERE city_id = 1 AND min_ratio <= @ratio
+ORDER BY min_ratio DESC
+LIMIT 1;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+---------------------+------------+-------+------------------------+------------------------+---------+------+------+----------+--------------------------------------------+
+| id | select_type | table               | partitions | type  | possible_keys          | key                    | key_len | ref  | rows | filtered | Extra                                      |
++----+-------------+---------------------+------------+-------+------------------------+------------------------+---------+------+------+----------+--------------------------------------------+
+| 1  | SIMPLE      | surge_demand_levels | NULL       | range | uq_surge_demand_levels | uq_surge_demand_levels | 6       | NULL | 2    | 100      | Using index condition; Backward index scan |
++----+-------------+---------------------+------------+-------+------------------------+------------------------+---------+------+------+----------+--------------------------------------------+
+*/
 
 -- 7. Завантаження парку: скільки хвилин кожне авто провело в кожному статусі за добу
 --    (останній статус доби рахується до її кінця або до «зараз», що раніше)
@@ -1761,6 +2719,28 @@ ORDER BY v.plate_number;
                 -> Single-row index lookup on v using PRIMARY (id = l.vehicle_id)  (cost=0.3 rows=1)
    сам запит повернув рядків: 4 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT v.plate_number, vs.code AS status,
+       SUM(TIMESTAMPDIFF(MINUTE, l.created_at,
+           COALESCE(l.next_at, LEAST(@dayEnd, UTC_TIMESTAMP())))) AS minutes
+FROM (SELECT vehicle_id, status_id, created_at,
+             LEAD(created_at) OVER (PARTITION BY vehicle_id ORDER BY created_at) AS next_at
+      FROM vehicle_status_log
+      WHERE created_at >= @dayStart AND created_at < @dayEnd) l
+JOIN vehicles v          ON v.id = l.vehicle_id
+JOIN vehicle_statuses vs ON vs.id = l.status_id
+GROUP BY v.plate_number, vs.code
+ORDER BY v.plate_number;
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+--------------------+------------+--------+---------------+---------+---------+--------------+------+----------+---------------------------------+
+| id | select_type | table              | partitions | type   | possible_keys | key     | key_len | ref          | rows | filtered | Extra                           |
++----+-------------+--------------------+------------+--------+---------------+---------+---------+--------------+------+----------+---------------------------------+
+| 1  | PRIMARY     | <derived2>         | NULL       | ALL    | NULL          | NULL    | NULL    | NULL         | 2    | 100      | Using temporary; Using filesort |
+| 1  | PRIMARY     | vs                 | NULL       | eq_ref | PRIMARY       | PRIMARY | 1       | l.status_id  | 1    | 100      | NULL                            |
+| 1  | PRIMARY     | v                  | NULL       | eq_ref | PRIMARY       | PRIMARY | 4       | l.vehicle_id | 1    | 100      | NULL                            |
+| 2  | DERIVED     | vehicle_status_log | NULL       | ALL    | NULL          | NULL    | NULL    | NULL         | 4    | 25       | Using where; Using filesort     |
++----+-------------+--------------------+------------+--------+---------------+---------+---------+--------------+------+----------+---------------------------------+
+*/
+
 -- 8. Збори за місце для поїздки з точки 6 (посадка) до точки 1 (висадка).
 --    Збір точки або зони, що містить точку; кожен збір — не більше одного разу.
 SET @fromPoint = 6, @toPoint = 1;
@@ -1794,6 +2774,24 @@ WHERE lf.is_active
                         -> Single-row index lookup on sz using PRIMARY (id = lf.service_zone_id)  (cost=0.35 rows=1)
    сам запит повернув рядків: 1 */
 
+EXPLAIN FORMAT=TRADITIONAL SELECT DISTINCT lf.id, lf.name, lf.amount
+FROM location_fees lf
+JOIN pickup_points pp ON pp.id IN (@fromPoint, @toPoint)
+LEFT JOIN service_zones sz ON sz.id = lf.service_zone_id
+WHERE lf.is_active
+  AND (lf.pickup_point_id = pp.id OR ST_Contains(sz.area, pp.location))
+  AND ((pp.id = @fromPoint AND lf.applies_on_pickup)
+       OR (pp.id = @toPoint AND lf.applies_on_dropoff));
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+-----------------------------------+---------+---------+----------------------------+------+----------+------------------------------------------------------+
+| id | select_type | table | partitions | type   | possible_keys                     | key     | key_len | ref                        | rows | filtered | Extra                                                |
++----+-------------+-------+------------+--------+-----------------------------------+---------+---------+----------------------------+------+----------+------------------------------------------------------+
+| 1  | SIMPLE      | lf    | NULL       | ALL    | idx_location_fees_point           | NULL    | NULL    | NULL                       | 1    | 100      | Using where; Using temporary                         |
+| 1  | SIMPLE      | sz    | NULL       | eq_ref | PRIMARY                           | PRIMARY | 4       | veze_db.lf.service_zone_id | 1    | 100      | Distinct                                             |
+| 1  | SIMPLE      | pp    | NULL       | range  | PRIMARY,sp_pickup_points_location | PRIMARY | 8       | NULL                       | 2    | 100      | Using where; Distinct; Using join buffer (hash join) |
++----+-------------+-------+------------+--------+-----------------------------------+---------+---------+----------------------------+------+----------+------------------------------------------------------+
+*/
+
 -- 9. Авто, модель яких не вміщує обіцяне класом (має бути порожньо;
 --    застосунок перевіряє це при додаванні авто)
 SELECT v.plate_number, vc.code AS class, vc.max_passengers, vm.seats,
@@ -1817,3 +2815,19 @@ WHERE vm.seats < vc.max_passengers OR vm.cargo_kg < IFNULL(vc.max_cargo_kg, 0);
     -> Filter: ((vm.seats < vc.max_passengers) or (vm.cargo_kg < ifnull(vc.max_cargo_kg,0)))  (cost=0.256 rows=0.556)
         -> Single-row index lookup on vm using PRIMARY (id = v.model_id)  (cost=0.256 rows=1)
    сам запит повернув рядків: 0 */
+
+EXPLAIN FORMAT=TRADITIONAL SELECT v.plate_number, vc.code AS class, vc.max_passengers, vm.seats,
+       vc.max_cargo_kg, vm.cargo_kg
+FROM vehicles v
+JOIN vehicle_classes vc ON vc.id = v.class_id
+JOIN vehicle_models vm  ON vm.id = v.model_id
+WHERE vm.seats < vc.max_passengers OR vm.cargo_kg < IFNULL(vc.max_cargo_kg, 0);
+/* результат EXPLAIN FORMAT=TRADITIONAL:
++----+-------------+-------+------------+--------+-------------------------------------+-------------------+---------+--------------------+------+----------+-------------+
+| id | select_type | table | partitions | type   | possible_keys                       | key               | key_len | ref                | rows | filtered | Extra       |
++----+-------------+-------+------------+--------+-------------------------------------+-------------------+---------+--------------------+------+----------+-------------+
+| 1  | SIMPLE      | vc    | NULL       | ALL    | PRIMARY                             | NULL              | NULL    | NULL               | 6    | 100      | NULL        |
+| 1  | SIMPLE      | v     | NULL       | ref    | fk_vehicles_class,fk_vehicles_model | fk_vehicles_class | 1       | veze_db.vc.id      | 1    | 100      | NULL        |
+| 1  | SIMPLE      | vm    | NULL       | eq_ref | PRIMARY                             | PRIMARY           | 2       | veze_db.v.model_id | 1    | 55.55    | Using where |
++----+-------------+-------+------------+--------+-------------------------------------+-------------------+---------+--------------------+------+----------+-------------+
+*/
