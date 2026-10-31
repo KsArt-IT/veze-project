@@ -89,6 +89,7 @@
 | Карта таблиць (що зберігає, зв'язки, групування) | [project/architecture/database-tables.md](project/architecture/database-tables.md) |
 | SQL-скрипти: `0x_schema_*` / `0x_0y_schema_<таблиця>` — таблиці, `1x_seed_*` — тестові дані | `veze-node-app/init/*.sql` |
 | Приклади запитів | `veze-node-app/queries/` |
+| Приклади збережених процедур (цикли, курсори, розгалуження) — не встановлюються | [veze-node-app/queries/procedures.sql](veze-node-app/queries/procedures.sql) |
 
 Домовленості:
 - Таблиці та колонки — `snake_case`, таблиці в множині (`rides`, `vehicles`).

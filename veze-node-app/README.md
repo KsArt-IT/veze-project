@@ -54,7 +54,8 @@ veze-node-app/
     ├── vehicles-examples.sql
     ├── restrictions-examples.sql
     ├── rides-examples.sql
-    └── payments-feedback-examples.sql
+    ├── payments-feedback-examples.sql
+    └── procedures.sql            # приклади процедур: цикли, курсори, розгалуження
 ```
 
 Опис таблиць — [project/architecture/database-tables.md](../project/architecture/database-tables.md).

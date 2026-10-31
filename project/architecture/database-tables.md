@@ -195,3 +195,8 @@
   [queries/restrictions-examples.sql](../../veze-node-app/queries/restrictions-examples.sql),
   [queries/rides-examples.sql](../../veze-node-app/queries/rides-examples.sql),
   [queries/payments-feedback-examples.sql](../../veze-node-app/queries/payments-feedback-examples.sql).
+- Примеры хранимых процедур (циклы, курсоры, ветвления) —
+  [queries/procedures.sql](../../veze-node-app/queries/procedures.sql): смена статуса машины
+  и поездки (кэш + журнал), отправка разряженных машин в депо, offline по пропавшей телеметрии,
+  эмуляция трека, итоговый коэффициент цены, отчёт загрузки парка. В БД не устанавливаются
+  автоматически: ядро — в Node.js.
